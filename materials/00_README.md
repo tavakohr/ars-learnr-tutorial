@@ -21,6 +21,17 @@ Work through the chapters in order. Each chapter builds on the previous one. By 
 | 06 | R Ecosystem and Tools | cards, cardx, gtsummary, datasetjson — what each covers and where gaps are |
 | 07 | Package Design Roadmap | arsbridge concept, v0.1 scope, function signatures, JSON-to-shell field mapping |
 
+### Reference Supplements
+
+These supplements expand the rules introduced in Chapter 3 and are referenced
+from sections 3.10 – 3.14 of `ars_tutorial_ch3.Rmd`.
+
+| File | Topic | What you will know after |
+|------|-------|--------------------------|
+| 08 | [Object ID Conventions](08_Object_ID_Conventions.md) | Standard mandate vs. industry convention; full prefix table; Style A vs B; validator checklist; anti-patterns |
+| 09 | [JSON Field Syntax Reference](09_JSON_Field_Syntax_Reference.md) | camelCase rule; `*Id` / `*Ids` reference patterns; plural collections; required-by-class table; mutual-exclusion pairs; data types |
+| 10 | [resultPattern and Controlled Terminology](10_resultPattern_and_ControlledTerms.md) | The `X`-grammar in full; every closed and extensible enumeration value verbatim; the `TerminologyExtension` / `SponsorTerm` extension pattern |
+
 ---
 
 ## Prerequisites

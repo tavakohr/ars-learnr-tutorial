@@ -31,7 +31,11 @@ gradethis_setup()
 # Load pharmaverse ADaM datasets
 data("adsl",  package = "pharmaverseadam")
 data("adae",  package = "pharmaverseadam")
-data("adtte", package = "pharmaverseadam")
+# pharmaverseadam 1.4+ replaced "adtte" with TA-specific datasets; use the
+# oncology one and join subject-level vars in from ADSL
+data("adtte_onco", package = "pharmaverseadam")
+adtte <- adtte_onco %>%
+  left_join(adsl %>% select(USUBJID, TRT01A, ITTFL), by = "USUBJID")
 data("adlb",  package = "pharmaverseadam")
 
 adsl_safe <- adsl %>% filter(SAFFL == "Y")
@@ -368,6 +372,216 @@ Individual analyses reference this template and supply their specific parameter 
 
 ---
 
+### 3.10 Naming Convention — Object IDs
+
+Every ARM-TS object has an `id`. The LDM says only that IDs must be **strings**
+and **unique within scope**; format is sponsor choice. But there is a strong
+industry convention worth adopting from day one.
+
+**Industry-standard prefix table** (used by the CDISC examples, by every
+published ARM-TS the author has seen, and by this tutorial throughout):
+
+| Object class | ID prefix | Examples |
+|--------------|-----------|----------|
+| `ReportingEvent` | `RE` | `RE001` |
+| `ReferenceDocument` | `SAP`, `PROG`, `PROT` | `SAP001`, `PROG001` |
+| `AnalysisSet` | `AS` | `AS001` (ITT), `AS002` (Safety) |
+| `DataSubset` | `DS` | `DS001` |
+| `GroupingFactor` | `GF` | `GF001` (Treatment Arm) |
+| `Group` | `G` | `G001` (Drug A), `G002` (Placebo) |
+| `AnalysisMethod` | `M` | `M001` (continuous), `M002` (count + %) |
+| `Operation` | `O` | `O001` (n), `O002` (Mean), … `O008` (Pct) |
+| `Analysis` | `AN` | `AN001`, `AN042` |
+| `Output` | `OUT` | `OUT001` |
+| `OutputDisplay` | `DISP` | `DISP001` |
+| `DisplaySubSection` | `TITLE`, `HDR`, `FN`, `ABBR`, `FTR` | `TITLE001`, `FN001` |
+| `ReferencedOperationRelationship` | `ROR` | `ROR001` |
+| `SponsorTerm` | `ST` | `ST001` |
+
+**Two equally valid naming styles:**
+
+- **Style A — sequential code** (CDISC examples; dense, machine-friendly):
+  `AS001`, `AS002`, `M001`, `AN001` … `AN045`
+- **Style B — descriptive code** (longer, more readable in code review):
+  `AS_ITT`, `AS_SAFETY`, `M_SUMM_CONT`, `AN_AGE_BY_TRT`
+
+Pick one for the whole `ReportingEvent` and stick with it. Mixing styles
+within one file is the hardest pattern to review.
+
+**Validator checklist for IDs:**
+
+1. **Presence** — every required `id` is non-empty
+2. **Uniqueness** — no duplicates within scope
+3. **Resolution** — every `*Id` reference resolves to an existing object
+4. **Stability** — once published, do not rename IDs; bump
+   `ReportingEvent.version` instead
+5. **Characters** — stick to `[A-Za-z0-9_]`; no spaces, no hyphens
+
+> Full reference (per-class scope rules, anti-patterns, conventions for
+> SponsorTerm and TerminologyExtension IDs):
+> [`materials/08_Object_ID_Conventions.md`](materials/08_Object_ID_Conventions.md).
+
+---
+
+### 3.11 Naming Convention — `name`, `label`, `description`
+
+Most ARM-TS classes carry three text-content fields. They are not
+interchangeable.
+
+| Field | Purpose | Typical length | Example |
+|-------|---------|----------------|---------|
+| `name` | Canonical human-readable name. Goes in the annotated shell, in tooling lookups, on output displays. | 3–60 chars | `"Safety Population"` |
+| `label` | Short display label for tight spaces (tooltips, column headers). | ≤ 30 chars | `"Safety Pop"` |
+| `description` | Free-text explanation of intent / definition / nuance. | Sentence to paragraph | `"All subjects who received at least one dose of study drug (SAFFL='Y')"` |
+
+**Rules of thumb:**
+
+- `name` is **required on almost every class**. Omitting it is a schema violation.
+- `label` is optional but recommended when displays have width constraints.
+- `description` is optional but **highly recommended** for audit trail.
+  Validators do not check it; reviewers absolutely do.
+- Use **Title Case** for `name` and `label`. Sentence case is fine for `description`.
+
+---
+
+### 3.12 JSON Field Syntax — camelCase, References, Plurals
+
+The ARS LDM uses LinkML serialized as JSON. Three rules apply universally.
+
+**Rule 1 — camelCase field names.** Every field is `lowerCamelCase`. Class
+names (in documentation) are `UpperCamelCase` to distinguish.
+
+```json
+"analysisSets":      [...]   ✅
+"AnalysisSets":      [...]   ❌ PascalCase
+"analysis_sets":     [...]   ❌ snake_case
+"analysissets":      [...]   ❌ no boundary
+```
+
+**Rule 2 — Singular references end in `Id`; plural references end in `Ids`.**
+
+```json
+"analysisSetId":   "AS002"            ← single reference (string)
+"categoryIds":     ["C001", "C003"]   ← multi-reference (array of strings)
+```
+
+A field ending `Id` (string) is a single reference; a field ending `Ids`
+(array) is a list. **References use IDs, never nested objects** — this is
+how the standard enforces Principle 1 (Reuse over repetition).
+
+**Rule 3 — Collections are plural; elements are singular classes.**
+
+```json
+"analyses":    [Analysis, Analysis, ...]
+"methods":     [AnalysisMethod, ...]
+"operations":  [Operation, ...]
+"groups":      [Group, ...]
+"results":     [OperationResult, ...]
+```
+
+**Mutual-exclusion slot pairs** — exactly one of the two must be present,
+never both:
+
+| Class | Mutually exclusive slots |
+|-------|--------------------------|
+| `AnalysisSet`, `DataSubset`, `Group` | `condition` *or* `compoundExpression` |
+| `ExtensibleTerminologyTerm` | `controlledTerm` *or* `sponsorTermId` |
+| `PageRef` | `pageNumbers` / (`firstPage` + `lastPage`) *or* `pageNames` |
+
+> Full reference (required-by-class table, ordered slots, data types,
+> anti-patterns): [`materials/09_JSON_Field_Syntax_Reference.md`](materials/09_JSON_Field_Syntax_Reference.md).
+
+---
+
+### 3.13 `resultPattern` Grammar
+
+`Operation.resultPattern` controls how `rawValue` becomes `formattedValue`.
+The LDM says only "the default pattern or format" — the **`X`-grammar**
+below is industry convention, used by every CDISC example and by `{cards}`
+/ `{gtsummary}`.
+
+| Character | Meaning |
+|-----------|---------|
+| `X` | One digit position |
+| `.` | The decimal point |
+| `(`, `)`, `%`, `:` | Literal characters appearing as-is in the formatted value |
+
+**Counting rule:** the number of `X`s **after the decimal point** equals
+the number of decimal places.
+
+| Pattern | Decimals | Example raw → formatted |
+|---------|----------|------------------------|
+| `XXX` | 0 | `45` → `45` |
+| `XX.X` | 1 | `84.44444` → `84.4` |
+| `XXX.XX` | 2 | `5.234` → `5.23` |
+| `X.XXX` | 3 | `0.0234` → `0.023` |
+| `X.XXXX` | 4 | `0.00031` → `0.0003` |
+| `(XX.X)` | 1, parenthesized | `84.4` → `(84.4)` |
+| `XX.X%` | 1, percent-suffixed | `84.4` → `84.4%` |
+
+`arsbridge::validate_ard()` Check #5 uses this rule: parse `rawValue` as a
+double, count the decimal `X`s, `sprintf("%.<n>f", value)`, and compare to
+`formattedValue`. Mismatches are flagged.
+
+> Full grammar including edge cases (negative numbers, integer rawValue +
+> decimal pattern, composite "n (%)" patterns):
+> [`materials/10_resultPattern_and_ControlledTerms.md`](materials/10_resultPattern_and_ControlledTerms.md).
+
+---
+
+### 3.14 Controlled Terminology and Extensibility
+
+ARS has **closed enumerations** (fixed, not extensible) and **extensible
+enumerations** (CDISC values + sponsor extensions). All values are
+case-sensitive and must match verbatim.
+
+**Closed enumerations** — value goes directly in the slot:
+
+| Enum | Values |
+|------|--------|
+| `ConditionComparatorEnum` | `EQ`, `NE`, `LT`, `LE`, `GT`, `GE`, `IN`, `NOTIN` |
+| `ExpressionLogicalOperatorEnum` | `AND`, `OR`, `NOT` |
+| `DisplaySectionTypeEnum` | `Title`, `Header`, `Rowlabel-Header`, `Body`, `Footnote`, `Abbreviation`, `Footer` |
+| `PageRefTypeEnum` | `PhysicalRef`, `NamedDestination` |
+
+**Extensible enumerations** — value goes in `controlledTerm` (CDISC value)
+or `sponsorTermId` (sponsor extension):
+
+| Enum | CDISC values |
+|------|--------------|
+| `AnalysisReasonEnum` | `SPECIFIED IN PROTOCOL`, `SPECIFIED IN SAP`, `DATA DRIVEN`, `REQUESTED BY REGULATORY AGENCY` |
+| `AnalysisPurposeEnum` | `PRIMARY OUTCOME MEASURE`, `SECONDARY OUTCOME MEASURE`, `EXPLORATORY OUTCOME MEASURE` |
+| `OperationRoleEnum` | `NUMERATOR`, `DENOMINATOR` |
+| `OutputFileTypeEnum` | `pdf`, `rtf`, `txt` |
+
+**Extending an enum** — add a `TerminologyExtension`:
+
+```json
+{
+  "terminologyExtensions": [{
+    "id": "TE001",
+    "enumeration": "AnalysisReasonEnum",
+    "sponsorTerms": [{
+      "id": "ST001",
+      "submissionValue": "PER PROTOCOL DEVIATION ANALYSIS",
+      "description": "Added in response to protocol-deviation review"
+    }]
+  }]
+}
+```
+
+Then on the consuming class:
+
+```json
+"reason": { "sponsorTermId": "ST001" }   ← instead of "controlledTerm"
+```
+
+> Every value, anti-patterns ("eq" lowercase, "Mean" instead of `Mean`),
+> and the full extension pattern:
+> [`materials/10_resultPattern_and_ControlledTerms.md`](materials/10_resultPattern_and_ControlledTerms.md).
+
+---
+
 ## Hands-On: Build ARM-TS Objects
 
 ### What's in the sample `re_json`?
@@ -592,6 +806,115 @@ grade_result(
 
 ---
 
+## Exercise 3.5 — Validate ID-Prefix Conventions {data-progressive=FALSE}
+
+Section 3.10 introduced **Style A** prefix conventions: `AS` for AnalysisSet,
+`GF` for GroupingFactor, `M` for AnalysisMethod, `AN` for Analysis, `O` for
+Operation. The LDM does NOT enforce these — but our project (and the CDISC
+examples) does. Write a tiny validator that confirms `re_json` conforms.
+
+```{r ch3-ex5, exercise=TRUE, exercise.lines=22}
+# Helper: do all items in a list have IDs starting with the given prefix?
+check_prefix <- function(items, prefix) {
+  ids <- sapply(items, function(x) x$___)         # which field carries the ID?
+  all(startsWith(ids, prefix))
+}
+
+# Build the conformance table for the four collections in re_json
+tibble::tribble(
+  ~class,           ~conforms,
+  "AnalysisSet",    check_prefix(re_json$analysisSets,      ___),  # expected prefix?
+  "GroupingFactor", check_prefix(re_json$analysisGroupings, ___),
+  "AnalysisMethod", check_prefix(re_json$methods,           ___),
+  "Analysis",       check_prefix(re_json$analyses,          ___)
+)
+```
+
+```{r ch3-ex5-hint-1}
+# Each ARS object exposes its id as $id.
+# Expected prefixes:
+#   AnalysisSet     → "AS"
+#   GroupingFactor  → "GF"
+#   AnalysisMethod  → "M"
+#   Analysis        → "AN"
+```
+
+```{r ch3-ex5-solution}
+check_prefix <- function(items, prefix) {
+  ids <- sapply(items, function(x) x$id)
+  all(startsWith(ids, prefix))
+}
+
+tibble::tribble(
+  ~class,           ~conforms,
+  "AnalysisSet",    check_prefix(re_json$analysisSets,      "AS"),
+  "GroupingFactor", check_prefix(re_json$analysisGroupings, "GF"),
+  "AnalysisMethod", check_prefix(re_json$methods,           "M"),
+  "Analysis",       check_prefix(re_json$analyses,          "AN")
+)
+# All four conform. In arsbridge, this is the LINT layer:
+# it doesn't gate schema validity, but it surfaces inconsistencies that
+# trip up downstream reviewers.
+```
+
+---
+
+## Exercise 3.6 — Resolve a `*Id` Reference {data-progressive=FALSE}
+
+Section 3.12 introduced the `*Id` reference pattern. An `*Id` is only
+meaningful if the target object actually exists in the ReportingEvent —
+that's `validate_ard()` Check #3 (reference resolution). Build the lookup
+that powers it.
+
+Given `Analysis AN001`, resolve its `analysisSetId` to the `AnalysisSet`
+object it refers to, and print the resolved population name.
+
+```{r ch3-ex6, exercise=TRUE, exercise.lines=20}
+an <- re_json$analyses[[1]]
+target_id <- an$___                       # which field carries the population reference?
+
+# Build an ID -> object lookup for analysisSets
+as_by_id <- setNames(
+  re_json$analysisSets,
+  sapply(re_json$analysisSets, function(x) x$id)
+)
+
+# Resolve and report
+resolved <- as_by_id[[target_id]]
+if (is.null(resolved)) {
+  cat("UNRESOLVED reference:", target_id, "\n")
+} else {
+  cat("Reference", target_id, "resolves to AnalysisSet:", resolved$___, "\n")
+}
+```
+
+```{r ch3-ex6-hint-1}
+# An Analysis points at its population via the analysisSetId field.
+# Each AnalysisSet exposes a $name field for the human-readable name.
+```
+
+```{r ch3-ex6-solution}
+an <- re_json$analyses[[1]]
+target_id <- an$analysisSetId
+
+as_by_id <- setNames(
+  re_json$analysisSets,
+  sapply(re_json$analysisSets, function(x) x$id)
+)
+
+resolved <- as_by_id[[target_id]]
+if (is.null(resolved)) {
+  cat("UNRESOLVED reference:", target_id, "\n")
+} else {
+  cat("Reference", target_id, "resolves to AnalysisSet:", resolved$name, "\n")
+}
+# "Reference AS002 resolves to AnalysisSet: Safety Population"
+# Run this same pattern over methodId, groupingId, groupId, operationId,
+# referenceDocumentId — and you have validate_ard() Check #3.
+```
+
+---
+
 ## Chapter 3 Knowledge Check
 
 ```{r ch3-quiz, echo=FALSE}
@@ -682,6 +1005,65 @@ quiz(
     answer("ReportingEvent.label"),
     allow_retry = TRUE,
     random_answer_order = TRUE
+  ),
+
+  question(
+    "In the sample re_json (and every example in this tutorial), 'AS' prefixes AnalysisSet IDs (AS001, AS002), 'M' prefixes Method IDs, 'AN' prefixes Analysis IDs. What does this convention represent?",
+    answer(
+      "An industry convention used by the CDISC examples — NOT mandated by the ARS LDM",
+      correct = TRUE
+    ),
+    answer("A strict requirement enforced by the ARS schema validator"),
+    answer("An FDA submission requirement that overrides sponsor naming"),
+    answer("A reserved keyword that learnr converts to the corresponding class"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Which field name is VALID in an ARM-TS JSON file?",
+    answer("analysisSetId", correct = TRUE),
+    answer("AnalysisSetId"),
+    answer("analysis_set_id"),
+    answer("AnalysisSet"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "An AnalysisSet has BOTH a `condition` field AND a `compoundExpression` field populated in the same object. What is the correct behavior?",
+    answer(
+      "Schema violation — exactly one of `condition` or `compoundExpression` must be present, never both",
+      correct = TRUE
+    ),
+    answer("Both are honored; condition is applied first, then the compoundExpression"),
+    answer("Allowed only when the conditions match"),
+    answer("Allowed but only at the ReportingEvent level"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "An Operation has resultPattern `XXX.XX`. What does this imply for formattedValue?",
+    answer("Up to three integer digits and exactly 2 decimal places", correct = TRUE),
+    answer("Three operations chained together"),
+    answer("A range from 0 to 99,999.99"),
+    answer("Currency format with two cents shown"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "An Analysis has `reason = { 'controlledTerm': 'specified in sap' }`. What is the issue?",
+    answer(
+      "AnalysisReasonEnum values are case-sensitive; the correct value is 'SPECIFIED IN SAP' (uppercase exactly)",
+      correct = TRUE
+    ),
+    answer("controlledTerm must be a number, not a string"),
+    answer("Must use sponsorTermId instead — controlledTerm is for sponsor extensions"),
+    answer("The value must be wrapped in an array"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
   )
 )
 ```
@@ -698,6 +1080,23 @@ You have now seen every major ARM-TS object with:
 - **JSON examples** grounded in a realistic AE summary table
 - **Explicit field-by-field mapping** to what you already write in annotated shells
 - **Hands-on practice** building an `AnalysisMethod`, a `Group`, and a full `Analysis` object
+
+And the **rules and conventions** that make an ARM-TS file machine-validatable:
+
+- **Object ID conventions** (§3.10) — the Style A prefix system (`AS`, `GF`, `M`,
+  `AN`, …) used by CDISC examples; uniqueness, resolution, and stability rules
+- **`name` / `label` / `description` semantics** (§3.11) — what goes where, and why
+- **JSON field syntax** (§3.12) — camelCase universally, `*Id` for single references,
+  `*Ids` for multi-references, plural collections, mutual-exclusion slot pairs
+  (`condition` xor `compoundExpression`, `controlledTerm` xor `sponsorTermId`)
+- **`resultPattern` grammar** (§3.13) — the `X`-digit convention used by every CDISC
+  example, by `{cards}` / `{gtsummary}`, and by `arsbridge::validate_ard()` Check #5
+- **Controlled terminology** (§3.14) — every closed enum value verbatim, the four
+  extensible enums, and the `TerminologyExtension` / `SponsorTerm` extension pattern
+
+You also prototyped two of the validation checks `arsbridge::validate_ard()`
+will perform: prefix-convention lint (Exercise 3.5) and `*Id` reference
+resolution (Exercise 3.6).
 
 **The key insight:** everything in an annotated shell has an ARM-TS equivalent. The information
 content is identical; the representation is **machine-readable JSON vs. human-readable

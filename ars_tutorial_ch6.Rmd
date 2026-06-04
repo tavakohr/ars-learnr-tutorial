@@ -39,7 +39,11 @@ gradethis_setup()
 # Load pharmaverse ADaM datasets
 data("adsl",  package = "pharmaverseadam")
 data("adae",  package = "pharmaverseadam")
-data("adtte", package = "pharmaverseadam")
+# pharmaverseadam 1.4+ replaced "adtte" with TA-specific datasets; use the
+# oncology one and join subject-level vars in from ADSL
+data("adtte_onco", package = "pharmaverseadam")
+adtte <- adtte_onco %>%
+  left_join(adsl %>% select(USUBJID, TRT01A, ITTFL), by = "USUBJID")
 data("adlb",  package = "pharmaverseadam")
 
 adsl_safe <- adsl %>% filter(SAFFL == "Y")
