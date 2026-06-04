@@ -1,0 +1,502 @@
+---
+title: "CDISC Analysis Results Standard (ARS) — Interactive Training"
+subtitle: "Chapter 5: The Traceability Chain"
+author: "Hamid Tavakoli, MD, MSc"
+output:
+  learnr::tutorial:
+    progressive: true
+    allow_skip: true
+    css: www/custom.css
+runtime: shiny_prerendered
+description: >
+  Chapter 5 walks one analysis end-to-end: SAP language → ARM-TS objects →
+  ADaM data → R code → ARD results → display cell. You will re-derive a stored
+  ARD result from ADaM, find a deliberate traceability break by switching the
+  population, and prototype a format-consistency check (rawValue vs.
+  formattedValue).
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(gradethis)
+library(pharmaverseadam)
+library(pharmaversesdtm)
+library(dplyr)
+library(cards)
+library(jsonlite)
+library(glue)
+
+tutorial_options(exercise.timelimit = 60)
+gradethis_setup()
+
+# Load pharmaverse ADaM datasets
+data("adsl",  package = "pharmaverseadam")
+data("adae",  package = "pharmaverseadam")
+data("adtte", package = "pharmaverseadam")
+data("adlb",  package = "pharmaverseadam")
+
+adsl_safe <- adsl %>% filter(SAFFL == "Y")
+adsl_itt  <- adsl %>% filter(!is.na(ARM) & ARM != "")
+adae_teae <- adae %>% filter(TRTEMFL == "Y")
+
+# Analysis dataset for AE counts (Safety pop, any-TEAE flag)
+analysis_ae <- adsl_safe %>%
+  select(USUBJID, TRT01A) %>%
+  left_join(
+    adae_teae %>% distinct(USUBJID) %>% mutate(any_teae = 1L),
+    by = "USUBJID"
+  ) %>%
+  mutate(any_teae = dplyr::coalesce(any_teae, 0L))
+
+re_json <- jsonlite::read_json("data/reporting_event.json")
+```
+
+---
+
+## Chapter 5: The Traceability Chain
+
+### 5.1 The Chain
+
+ARS enables a formal, **machine-navigable traceability chain**:
+
+```
+Protocol / SAP
+      ↓
+  ARM-TS  (analysis specification)
+      ↓
+  ADaM    (analysis data)
+      ↓
+  R code  (execution)
+      ↓
+  ARD     (computed results)
+      ↓
+  Output Display  (table / figure)
+```
+
+Every link should be verifiable. The problem today is that **without ARS, the chain is broken
+between the SAP and everything downstream** — the only link is a human reading the SAP and
+deciding what the code should do.
+
+---
+
+### 5.2 Complete Worked Example
+
+We will trace one specific analysis from SAP language through to a display cell. The case
+study is the **Age summary by treatment arm in the Safety Population** — the same analysis
+encoded in your sample `re_json`.
+
+**Step 1 — The SAP.** Section 8.1 of the SAP says:
+
+> *"Baseline age (years) will be summarized using n, mean, standard deviation, median,
+> minimum, and maximum by treatment arm, in the Safety Population (subjects who received at
+> least one dose of study drug, SAFFL='Y' in ADSL)."*
+
+Today, a lead programmer reads this and writes an annotation. With ARS, this text is
+**formally encoded** as the ARM-TS objects below.
+
+**Step 2 — ARM-TS objects.** Encoded directly in `re_json`:
+
+- `ReferenceDocument` `"SAP001"` → the SAP PDF
+- `AnalysisSet` `"AS002"` → Safety Population (`ADSL.SAFFL EQ 'Y'`)
+- `GroupingFactor` `"GF001"` → Treatment Arm (`TRT01A`), with two pre-specified `Group`s:
+  `G001` Xanomeline High Dose and `G002` Placebo
+- `AnalysisMethod` `"M001"` → n, Mean, SD, Median, Min, Max (operations `O001`–`O006`)
+- `Analysis` `"AN001"` → ties it all together: `dataset = "ADSL"`, `variable = "AGE"`,
+  `analysisSetId = "AS002"`, `orderedGroupings[[1]].groupingId = "GF001"`, `methodId = "M001"`
+
+**Step 3 — The ADaM data.** ADSL — one row per subject, with `TRT01A`, `AGE`, `SAFFL`.
+
+**Step 4 — The R code.** The ARM-TS tells the programmer exactly what to do:
+
+```r
+adsl_safe <- adsl %>% filter(SAFFL == "Y")   # from AS002
+adsl_safe %>%
+  group_by(TRT01A) %>%                       # from GF001
+  summarise(
+    n      = sum(!is.na(AGE)),               # O001
+    mean   = round(mean(AGE),       1),      # O002, resultPattern "XXX.X"
+    sd     = round(sd(AGE),         2),      # O003, resultPattern "XXX.XX"
+    median = round(median(AGE),     1),      # O004
+    min    = min(AGE),                       # O005
+    max    = max(AGE)                        # O006
+  )
+```
+
+**Step 5 — The ARD.** The stored result in `re_json$analyses[[1]]$results` says:
+
+| operationId | groupId | rawValue | formattedValue |
+|-------------|---------|----------|----------------|
+| `O002` (Mean) | `G001` (Xanomeline High Dose) | `74.38095` | `74.4` |
+| `O002` (Mean) | `G002` (Placebo)              | `75.20930` | `75.2` |
+
+**Step 6 — The display.** A table cell reads `74.4` under the Xanomeline High Dose column —
+and that value is fully traceable to: `O002.formattedValue` → for `G001` in `GF001` → in
+the Safety Population `AS002` → on `ADSL.AGE` → per SAP Section 8.1.
+
+Every number is **machine-navigable to its source**.
+
+---
+
+### 5.3 What `arsbridge::validate_ard()` Will Check
+
+Given the ARM-TS and the ARD, `arsbridge` validates six things:
+
+| Check | How |
+|-------|-----|
+| Does every Analysis have ARD rows? | Match analysisId across ARM-TS and ARD |
+| Does the ARD match what you'd recompute from ADaM? | Re-run using ARM-TS parameters, compare to stored result |
+| Does the AnalysisSet match the ARD denominator? | Apply `AnalysisSet.condition` to ADaM, count, compare |
+| Are all expected group combinations present? | Cross-reference `ResultGroup.groupId` against `Group` |
+| Does `formattedValue` match `rawValue + resultPattern`? | Apply pattern to `rawValue`, compare |
+| Does the SAP page contain the analysis description? | Structural check; partially automatable with PDF parsing |
+
+You will prototype checks #2 and #5 in the exercises below.
+
+---
+
+### 5.4 The Master Annotated-Shell ↔ ARM-TS Mapping
+
+This is the design reference for `arsbridge::shell_to_ars()`.
+
+| Annotated-shell element | ARM-TS object | Key fields |
+|-------------------------|---------------|------------|
+| Table number & title | `Output` / `OutputDisplay` | `id`, `displayTitle` |
+| Population note (e.g., "Safety Pop, SAFFL=Y") | `AnalysisSet` | `id`, `condition` |
+| Data filter (e.g., "PARAMCD='OS'") | `DataSubset` | `id`, `condition` |
+| Dataset reference (e.g., "from ADTTE") | `Analysis.dataset` | `dataset` |
+| Variable reference (e.g., "AVAL") | `Analysis.variable` | `variable` |
+| Column grouping (e.g., "by TRT01A") | `GroupingFactor` + `OrderedGroupingFactor` | `groupingVariable`, `groupingId` |
+| Row grouping (e.g., "by AVISIT") | Second `GroupingFactor` + `OrderedGroupingFactor` | |
+| Statistic description (e.g., "n, mean, SD") | `AnalysisMethod` + `[Operation]` | `methodId`, `operations` |
+| Format string (e.g., "XX.X") | `Operation.resultPattern` | `resultPattern` |
+| n (%) denominator note | `ReferencedOperationRelationship` (DENOMINATOR) | |
+| SAP section reference | `DocumentReference` + `PageRef` | `referenceDocumentId`, `pageRefs` |
+| Program file reference | `programmingCode.documentRef` | |
+| Pre-specified / data-driven | `Analysis.reason` | SPECIFIED IN SAP vs. DATA DRIVEN |
+| Primary / secondary / exploratory | `Analysis.purpose` | PRIMARY / SECONDARY / EXPLORATORY |
+| Footnote text | `DisplaySection` (`sectionType: Footnote`) | `text` |
+| Abbreviation text | `DisplaySection` (`sectionType: Abbreviation`) | `text` |
+
+---
+
+## Hands-On: Verify a Stored Result End-to-End
+
+### Pull the stored mean from the ARD
+
+```{r ch5-preview, exercise=FALSE, echo=TRUE}
+# What the ARM-TS says happened: mean AGE per treatment arm, Safety Pop
+stored <- re_json$analyses[[1]]$results
+data.frame(
+  operationId    = sapply(stored, function(r) r$operationId),
+  groupId        = sapply(stored, function(r) r$resultGroups[[1]]$groupId),
+  rawValue       = sapply(stored, function(r) r$rawValue),
+  formattedValue = sapply(stored, function(r) r$formattedValue),
+  stringsAsFactors = FALSE
+)
+```
+
+---
+
+## Exercise 5.1 — Re-derive the Stored Mean from ADSL {data-progressive=FALSE}
+
+The ARM-TS says: `dataset = ADSL`, `variable = AGE`, `analysisSetId = AS002` (Safety),
+`groupingId = GF001` (TRT01A). Apply that spec and re-compute the mean age per arm. Then
+compare to the stored `formattedValue`.
+
+```{r ch5-ex1, exercise=TRUE, exercise.lines=18}
+# Stored values from the ARD (results[[2]] = Mean for G001, results[[4]] = Mean for G002)
+stored_mean_hd <- re_json$analyses[[1]]$results[[2]]$formattedValue
+stored_mean_pl <- re_json$analyses[[1]]$results[[4]]$formattedValue
+
+# Re-compute the means from ADSL, Safety population, by treatment arm
+computed_means <- adsl_safe %>%
+  group_by(___) %>%                                  # which variable groups the result?
+  summarise(mean_age = round(mean(___), 1))          # which variable is being summarised?
+
+computed_means
+cat("\nStored mean (Xanomeline High Dose):", stored_mean_hd, "\n")
+cat("Stored mean (Placebo):              ", stored_mean_pl, "\n")
+```
+
+```{r ch5-ex1-hint-1}
+# group_by(TRT01A) and summarise(mean_age = round(mean(AGE), 1))
+# The resultPattern for Mean is "XXX.X" → 1 decimal place
+```
+
+```{r ch5-ex1-solution}
+stored_mean_hd <- re_json$analyses[[1]]$results[[2]]$formattedValue
+stored_mean_pl <- re_json$analyses[[1]]$results[[4]]$formattedValue
+
+computed_means <- adsl_safe %>%
+  group_by(TRT01A) %>%
+  summarise(mean_age = round(mean(AGE), 1))
+
+computed_means
+cat("\nStored mean (Xanomeline High Dose):", stored_mean_hd, "\n")
+cat("Stored mean (Placebo):              ", stored_mean_pl, "\n")
+# If the computed values match the stored formattedValues → traceability verified.
+# This is exactly what arsbridge::validate_ard() will automate.
+```
+
+---
+
+## Exercise 5.2 — Find a Deliberate Traceability Break {data-progressive=FALSE}
+
+Suppose the stored ARD says mean age for Placebo = `75.2` — but the ARM-TS spec says the
+population should be **Safety** (`SAFFL='Y'`). What if a programmer accidentally used
+the **ITT** subset instead? Would the result match?
+
+This is a **population traceability break** — the stored result was computed against a
+different population than the ARM-TS specifies.
+
+```{r ch5-ex2, exercise=TRUE, exercise.lines=18}
+# Compute mean age in ITT (what a buggy program might do)
+itt_means <- adsl_itt %>%
+  group_by(TRT01A) %>%
+  summarise(mean_age_ITT = round(mean(AGE), 1))
+
+# Compute mean age in Safety (what the ARM-TS specifies)
+safe_means <- adsl_safe %>%
+  group_by(TRT01A) %>%
+  summarise(mean_age_Safety = round(mean(AGE), 1))
+
+# Join them and look at the differences side by side
+left_join(itt_means, safe_means, by = "TRT01A") %>%
+  mutate(diff = mean_age_Safety - mean_age_ITT)
+```
+
+```{r ch5-ex2-solution}
+itt_means <- adsl_itt %>%
+  group_by(TRT01A) %>%
+  summarise(mean_age_ITT = round(mean(AGE), 1))
+
+safe_means <- adsl_safe %>%
+  group_by(TRT01A) %>%
+  summarise(mean_age_Safety = round(mean(AGE), 1))
+
+left_join(itt_means, safe_means, by = "TRT01A") %>%
+  mutate(diff = mean_age_Safety - mean_age_ITT)
+# In CDISCPILOT01 the difference is small (a few subjects who randomised but
+# did not dose are excluded from Safety). In a real study with screen-failures
+# or major withdrawals, this difference would be large — and would be a flag.
+# validate_ard() catches this by always re-applying the ARM-TS AnalysisSet
+# rather than trusting the ARD's stored denominator alone.
+```
+
+---
+
+## Exercise 5.3 — Prototype a Format-Consistency Check {data-progressive=FALSE}
+
+ARS validation Check #5: does `formattedValue` match what `rawValue` would produce under
+the operation's `resultPattern`?
+
+For the **Mean** operation (`O002`) the pattern is `"XXX.X"` → **1 decimal place**.
+
+Write a small helper `check_format()` that takes a raw and formatted value plus a
+decimal count, and returns `TRUE` if they agree.
+
+```{r ch5-ex3, exercise=TRUE, exercise.lines=22}
+check_format <- function(raw_value, formatted_value, n_decimals) {
+  # 1. Convert raw_value (a string from the ARD) to numeric
+  raw_num <- as.numeric(___)
+
+  # 2. Format it to n_decimals using sprintf
+  expected <- sprintf(paste0("%.", n_decimals, "f"), ___)
+
+  # 3. Compare to the stored formatted value
+  expected == formatted_value
+}
+
+# Run it on the Mean for Xanomeline High Dose (O002, G001)
+res <- re_json$analyses[[1]]$results[[2]]
+check_format(res$rawValue, res$formattedValue, n_decimals = 1)
+```
+
+```{r ch5-ex3-hint-1}
+# Mean for G001:
+#   rawValue       = "74.38095"
+#   formattedValue = "74.4"
+# With n_decimals = 1, sprintf("%.1f", 74.38095) == "74.4" → TRUE
+```
+
+```{r ch5-ex3-solution}
+check_format <- function(raw_value, formatted_value, n_decimals) {
+  raw_num  <- as.numeric(raw_value)
+  expected <- sprintf(paste0("%.", n_decimals, "f"), raw_num)
+  expected == formatted_value
+}
+
+res <- re_json$analyses[[1]]$results[[2]]
+check_format(res$rawValue, res$formattedValue, n_decimals = 1)
+# TRUE — formattedValue is consistent with rawValue + resultPattern.
+# In arsbridge, the n_decimals is derived from Operation.resultPattern
+# by counting the X's after the decimal point in "XXX.X" → 1.
+```
+
+```{r ch5-ex3-check}
+grade_result(
+  pass_if(~ isTRUE(.result),
+          "Correct — that's Check #5 of validate_ard(). In the real package, n_decimals is derived from Operation.resultPattern by counting X's after the decimal."),
+  fail_if(~ TRUE,
+          "Use as.numeric(raw_value) and sprintf('%.1f', raw_num).")
+)
+```
+
+---
+
+## Exercise 5.4 — Map an Annotated-Shell Row to ARM-TS Objects (capstone) {data-progressive=FALSE}
+
+You're handed this annotated-shell row:
+
+> *"Table 14.3.1 — Subjects with any TEAE. From ADAE, count distinct USUBJID. Safety
+> Population (SAFFL='Y'). By treatment arm (TRT01A). n (%), denominator = N safety subjects
+> per arm. Per SAP Section 10.1, pp. 42-44."*
+
+Decompose it into the six ARM-TS objects that `arsbridge::shell_to_ars()` would emit. Fill in
+the missing pieces.
+
+```{r ch5-ex4, exercise=TRUE, exercise.lines=22}
+shell_row_mapping <- tribble(
+  ~ars_object,        ~field,              ~value_from_shell,
+
+  "AnalysisSet",      "id",                "AS002",
+  "AnalysisSet",      "condition",         "ADSL.SAFFL EQ 'Y'",
+
+  "GroupingFactor",   "id",                "GF001",
+  "GroupingFactor",   "groupingVariable",  ___,                          # which ADSL var?
+
+  "AnalysisMethod",   "id",                "M002",
+  "AnalysisMethod",   "name",              "Count and Percentage",
+
+  "Analysis",         "dataset",           ___,                          # which ADaM dataset?
+  "Analysis",         "variable",          "USUBJID",
+  "Analysis",         "analysisSetId",     ___,                          # which AnalysisSet?
+  "Analysis",         "methodId",          ___,                          # which Method?
+
+  "DocumentReference","referenceDocumentId","SAP001",
+  "DocumentReference","pageRefs",          "firstPage=42, lastPage=44",
+
+  "Output",           "displayTitle",      "Table 14.3.1 — Subjects with any TEAE"
+)
+
+shell_row_mapping
+```
+
+```{r ch5-ex4-solution}
+shell_row_mapping <- tribble(
+  ~ars_object,        ~field,              ~value_from_shell,
+  "AnalysisSet",      "id",                "AS002",
+  "AnalysisSet",      "condition",         "ADSL.SAFFL EQ 'Y'",
+  "GroupingFactor",   "id",                "GF001",
+  "GroupingFactor",   "groupingVariable",  "TRT01A",
+  "AnalysisMethod",   "id",                "M002",
+  "AnalysisMethod",   "name",              "Count and Percentage",
+  "Analysis",         "dataset",           "ADAE",
+  "Analysis",         "variable",          "USUBJID",
+  "Analysis",         "analysisSetId",     "AS002",
+  "Analysis",         "methodId",          "M002",
+  "DocumentReference","referenceDocumentId","SAP001",
+  "DocumentReference","pageRefs",          "firstPage=42, lastPage=44",
+  "Output",           "displayTitle",      "Table 14.3.1 — Subjects with any TEAE"
+)
+shell_row_mapping
+# One shell row decomposes into six referenced objects. That decomposition
+# is the entire shell_to_ars() function.
+```
+
+---
+
+## Chapter 5 Knowledge Check
+
+```{r ch5-quiz, echo=FALSE}
+quiz(
+  caption = "Chapter 5 — Check Your Understanding",
+
+  question(
+    "In the traceability chain, which link is currently the WEAKEST in industry today (without ARS)?",
+    answer("ADaM → R code"),
+    answer("R code → ARD"),
+    answer("SAP → ARM-TS / annotated shell", correct = TRUE),
+    answer("ARD → display"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "A re-computed mean from ADSL (Safety pop) matches the ARD's stored rawValue. What does this verify?",
+    answer(
+      "That the stored result is consistent with applying the ARM-TS specification to the ADaM data",
+      correct = TRUE
+    ),
+    answer("That the statistical method is appropriate for the variable"),
+    answer("That the SAP language is unambiguous"),
+    answer("That the ARM-TS schema is valid against ars_ldm.yaml"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "If the stored ARD was computed against the ITT population but the ARM-TS specifies Safety, what KIND of traceability break is this?",
+    answer("A format-consistency break (rawValue vs. formattedValue)"),
+    answer("A population traceability break (AnalysisSet not applied as specified)", correct = TRUE),
+    answer("A grouping completeness break (a Group is missing from the ARD)"),
+    answer("A coverage break (Analysis defined in ARM-TS has no ARD rows)"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Check #5 of validate_ard() compares formattedValue against what?",
+    answer("The value in the rendered RTF table"),
+    answer("rawValue, after applying the operation's resultPattern", correct = TRUE),
+    answer("The denominator from a different Analysis"),
+    answer("The result re-computed from ADaM"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Which ARM-TS objects does ONE row of an annotated shell typically decompose into?",
+    answer("Only an Analysis"),
+    answer("An AnalysisSet, GroupingFactor, AnalysisMethod, Analysis, DocumentReference, and Output", correct = TRUE),
+    answer("Only an Output and OutputDisplay"),
+    answer("A single OperationResult"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Why does the chain need to be MACHINE-navigable rather than just documented in the SAP?",
+    answer(
+      "Machine-navigability lets a regulator (or arsbridge) traverse from a single result cell back to its full context automatically — no manual SAP reading required",
+      correct = TRUE
+    ),
+    answer("Because SAPs cannot be written in English"),
+    answer("Because R cannot read PDF files"),
+    answer("Because Define-XML already provides this for ADaM"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  )
+)
+```
+
+---
+
+## Chapter 5 Summary {.congratulations}
+
+You can now trace a single cell in a clinical trial table all the way back to:
+
+- The **SAP language** that specified it
+- The **ARM-TS objects** that formally encode that specification
+- The **ADaM data** it operates on
+- The **R code** that computed it
+- The **ARD** that stores the result
+- The **display format** that renders it
+
+And you have prototyped two of the six validation checks `arsbridge::validate_ard()` will
+perform: **re-derivation from ADaM** (Check #2) and **format consistency** (Check #5). The
+shell-row mapping table in Section 5.4 is your primary design reference for the
+`shell_to_ars()` function in Chapter 7.
+
+**Next:** Chapter 6 — R Ecosystem and Tools (what `{cards}`, `{cardx}`, `{gtsummary}`, and
+`{datasetjson}` cover, and exactly where the open-source ARM-TS gap is)

@@ -1,0 +1,24 @@
+# Build / meta documents
+materials/BUILD_INSTRUCTIONS_learnr_tutorial.md
+
+# Rendered tutorial outputs
+*.html
+*_files/
+*_cache/
+
+# R session / RStudio
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+.Rapp.history
+
+# renv (uncomment if you adopt renv and want to keep only the lockfile)
+# renv/library/
+# renv/local/
+# renv/cellar/
+# renv/staging/
+
+# OS
+.DS_Store
+Thumbs.db

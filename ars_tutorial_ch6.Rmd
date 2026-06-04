@@ -1,0 +1,525 @@
+---
+title: "CDISC Analysis Results Standard (ARS) — Interactive Training"
+subtitle: "Chapter 6: R Ecosystem and Tools"
+author: "Hamid Tavakoli, MD, MSc"
+output:
+  learnr::tutorial:
+    progressive: true
+    allow_skip: true
+    css: www/custom.css
+runtime: shiny_prerendered
+description: >
+  Chapter 6 maps the open-source R ecosystem to the ARS pipeline: {cards} and
+  {cardx} cover the ARD layer; {gtsummary} and {rtables} cover the display
+  layer; {datasetjson} covers dataset exchange — but ARM-TS parsing,
+  generation, and validation are entirely uncovered. You will build a full
+  demographics table from ARD → gtsummary on real pharmaverse data and
+  enumerate what the ecosystem still lacks.
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(gradethis)
+library(pharmaverseadam)
+library(pharmaversesdtm)
+library(dplyr)
+library(cards)
+suppressWarnings(suppressMessages({
+  has_cardx     <- requireNamespace("cardx",     quietly = TRUE)
+  has_gtsummary <- requireNamespace("gtsummary", quietly = TRUE)
+  if (has_cardx)     library(cardx)
+  if (has_gtsummary) library(gtsummary)
+}))
+library(jsonlite)
+library(glue)
+
+tutorial_options(exercise.timelimit = 60)
+gradethis_setup()
+
+# Load pharmaverse ADaM datasets
+data("adsl",  package = "pharmaverseadam")
+data("adae",  package = "pharmaverseadam")
+data("adtte", package = "pharmaverseadam")
+data("adlb",  package = "pharmaverseadam")
+
+adsl_safe <- adsl %>% filter(SAFFL == "Y")
+adsl_itt  <- adsl %>% filter(!is.na(ARM) & ARM != "")
+adae_teae <- adae %>% filter(TRTEMFL == "Y")
+
+re_json <- jsonlite::read_json("data/reporting_event.json")
+```
+
+---
+
+## Chapter 6: R Ecosystem and Tools
+
+### 6.1 The Coverage Picture
+
+The R ecosystem for ARS covers **three parts of the pipeline well** and **one part poorly**.
+Understanding exactly what each tool does — and where it stops — is essential before
+designing `arsbridge`.
+
+```
+SAP ──→ ARM-TS ──→ ADaM ──→ ARD ──→ Display
+          ↑                  ↑          ↑
+     [NOT COVERED]     [{cards}]   [{gtsummary}]
+     [arsbridge]       [{cardx}]   [{rtables}]
+          ↑                           ↑
+     [NOT COVERED]            [{datasetjson}]
+     [arsbridge]               (exchange format)
+```
+
+The diagonal arrows from `[NOT COVERED]` show where `arsbridge` will sit.
+
+---
+
+### 6.2 `{cards}` — CDISC Analysis Results Data
+
+**Repository:** github.com/insightsengineering/cards
+**Maintainers:** Roche, GSK, Novartis (Insights Engineering)
+**On CRAN:** yes
+**Purpose:** generate ARD data frames from R data
+
+**Core functions**
+
+| Function | Purpose | Example use |
+|----------|---------|-------------|
+| `ard_continuous()` | n, mean, sd, median, min, max, quantiles | Age, lab values, vital signs |
+| `ard_categorical()` | Frequency tables | AE preferred terms, sex, race |
+| `ard_dichotomous()` | Binary counts and percentages | Any-TEAE flag, response flag |
+| `ard_missing()` | Missing-data summaries | Missing lab values |
+| `ard_total_n()` | Total N per group | Denominators for percentages |
+| `ard_stack()` | Combine multiple ARDs | Build a full table's ARD |
+| `ard_fmt_args()` | Set formatting arguments | Apply display formats |
+
+**What `{cards}` does NOT do**
+
+- It does **not** read or parse ARM-TS JSON
+- It does **not** know about AnalysisSets — you apply population filters manually before
+  calling it
+- It does **not** know about `GroupingFactor` definitions — you pass the grouping variable
+  directly as `by =`
+- It does **not** link the ARD back to the analysis specification
+- It does **not** produce ARM-TS from annotated shells
+
+---
+
+### 6.3 `{cardx}` — Extended ARD Utilities
+
+**Repository:** github.com/insightsengineering/cardx
+**Purpose:** complex statistical analyses for ARD generation
+
+`{cardx}` extends `{cards}` with statistics that need extra packages.
+
+| Function | Purpose |
+|----------|---------|
+| `ard_survival_survfit()` | Kaplan-Meier estimates at fixed timepoints |
+| `ard_regression()` | Logistic / Cox regression model summaries |
+| `ard_stats_t_test()` | t-test ARD |
+| `ard_stats_wilcox_test()` | Wilcoxon ARD |
+| `ard_stats_chisq_test()` | Chi-square test ARD |
+| `ard_stats_fisher_test()` | Fisher's exact test |
+| `ard_cmh_test()` | Cochran-Mantel-Haenszel (stratified) |
+
+Like `{cards}`, it reads neither ARM-TS nor any analysis specification — you still apply
+population and data-subset filters manually.
+
+---
+
+### 6.4 `{gtsummary}` — Tables from ARDs
+
+**Repository:** github.com/ddsjoberg/gtsummary
+**Purpose:** render clinical-trial tables from ARD data frames
+
+In recent versions (3.x), `{gtsummary}` has been refactored to use ARD as its core data
+structure. The pattern is `ard_stack(...) %>% tbl_ard_summary(...)`.
+
+**What `{gtsummary}` does NOT do**
+
+- It does not produce ARM-TS
+- It does not link `OutputDisplay` sections (title, footnotes) to the formal model
+- It does not validate that the table matches what ARM-TS specifies
+
+---
+
+### 6.5 `{datasetjson}` — CDISC Dataset-JSON Exchange Format
+
+**Repository:** github.com/atorus-research/datasetjson
+**On CRAN:** yes (v0.3.0)
+**Purpose:** read/write CDISC Dataset-JSON for regulatory submission
+
+Dataset-JSON is the new exchange format the FDA is evaluating as a **replacement for SAS XPT**.
+It serializes SDTM/ADaM datasets as JSON with CDISC-compliant metadata. The R Consortium
+used it for the **FDA Pilot 4 submission (fall 2025)**.
+
+**Relevance to ARS.** Dataset-JSON handles the **dataset exchange layer**. ARM-TS is a
+separate JSON structure that lives **alongside** Dataset-JSON — ARM-TS encodes the *analysis
+specification*, Dataset-JSON encodes the *datasets*.
+
+---
+
+### 6.6 The ARM-TS Parser Gap
+
+**None** of the above tools read or write ARM-TS JSON. There is no R function in the open
+source ecosystem that does any of the following:
+
+- Parse an ARM-TS JSON file into an R list/object
+- Extract `AnalysisSet` conditions and apply them as dplyr filters
+- Generate an ARM-TS JSON from a structured annotated shell
+- Render an ARM-TS JSON as a human-readable annotated shell
+- Validate that an ARD is consistent with its ARM-TS specification
+
+The CDISC model YAML (`ars_ldm.yaml`) defines the schema. But no R package implements:
+
+```r
+parse_ars("reporting_event.json")        # → R list of ARS objects
+ars_to_shell(re, output_id = "OUT001")   # → Excel annotated shell
+shell_to_ars("annotated_shell.xlsx")     # → ARM-TS JSON
+validate_ard(re, ard)                    # → traceability report
+```
+
+This is what `arsbridge` builds. Chapter 7 covers the design in detail.
+
+---
+
+### 6.7 `siera` (Clymb Clinical) — Closed-Source Comparison
+
+For completeness: `siera` is a commercial R package from **Clymb Clinical** that:
+
+- Automates ARD generation
+- Claims traceability linking
+- Integrates with their eTFL portal
+
+It is proprietary, not on CRAN, and requires a commercial license. It is the closest thing
+to what `arsbridge` would do — but it is **not open source**, not pharmaverse-aligned, and is
+developed by the same team (Bhavin Busa) who leads the ARS standard. The open-source
+community version of this capability does not exist.
+
+---
+
+### 6.8 Tool Coverage Summary
+
+| Capability | Tool | Coverage |
+|------------|------|----------|
+| Generate ARD from ADaM | `{cards}` + `{cardx}` | ✅ Good |
+| Render tables from ARD | `{gtsummary}`, `{rtables}` | ✅ Good |
+| Exchange datasets as JSON | `{datasetjson}` | ✅ Good |
+| Parse ARM-TS JSON into R | — | ❌ Missing |
+| Generate ARM-TS from annotated shell | — | ❌ Missing |
+| Render ARM-TS as annotated shell | — | ❌ Missing |
+| Validate ARD against ARM-TS | — | ❌ Missing |
+| Apply AnalysisSet from ARM-TS to data | — | ❌ Missing |
+
+The bottom **four** rows are `arsbridge`.
+
+---
+
+## Hands-On: Use the Existing Stack End-to-End
+
+The exercises below assemble the parts that **do** exist (`{cards}` → `{cardx}` →
+`{gtsummary}`) — then enumerate what's still missing.
+
+---
+
+## Exercise 6.1 — Build a Multi-Variable ARD with `ard_stack()` {data-progressive=FALSE}
+
+Real demographic tables combine continuous and categorical variables. Use `ard_stack()` to
+build an ARD that covers **AGE (continuous)** and **SEX (categorical)** by treatment arm in
+the Safety Population.
+
+```{r ch6-ex1, exercise=TRUE, exercise.lines=18}
+ard_demog <- ard_stack(
+  # Continuous: AGE
+  ard_continuous(
+    data      = adsl_safe,
+    by        = ___,             # treatment arm
+    variables = ___              # which variable?
+  ),
+  # Categorical: SEX
+  ard_categorical(
+    data      = adsl_safe,
+    by        = ___,             # treatment arm
+    variables = ___              # which variable?
+  )
+)
+
+cat("ard_demog rows:", nrow(ard_demog), "\n")
+cat("Distinct variables in ARD:\n")
+unique(ard_demog$variable)
+```
+
+```{r ch6-ex1-hint-1}
+# by        = TRT01A
+# variables = AGE   (for continuous)
+# variables = SEX   (for categorical)
+```
+
+```{r ch6-ex1-solution}
+ard_demog <- ard_stack(
+  ard_continuous(
+    data = adsl_safe, by = TRT01A, variables = AGE
+  ),
+  ard_categorical(
+    data = adsl_safe, by = TRT01A, variables = SEX
+  )
+)
+cat("ard_demog rows:", nrow(ard_demog), "\n")
+unique(ard_demog$variable)
+# ard_stack() unions multiple ARDs into one tall data frame.
+# This is the unit you hand to {gtsummary} to render a full demographics table.
+```
+
+---
+
+## Exercise 6.2 — Render the ARD as a `{gtsummary}` Table {data-progressive=FALSE}
+
+Wrap `ard_demog` into a formatted demographics table with `tbl_ard_summary()` and add a
+caption. (The cell renders the table as text — but in a real Rmd it would be a fully styled
+HTML/RTF table.)
+
+```{r ch6-ex2-setup, include=FALSE}
+ard_demog <- ard_stack(
+  ard_continuous(data = adsl_safe, by = TRT01A, variables = AGE),
+  ard_categorical(data = adsl_safe, by = TRT01A, variables = SEX)
+)
+```
+
+```{r ch6-ex2, exercise=TRUE, exercise.lines=18, exercise.setup="ch6-ex2-setup"}
+if (!requireNamespace("gtsummary", quietly = TRUE)) {
+  cat("Install gtsummary to run this exercise: install.packages('gtsummary')\n")
+} else {
+  library(gtsummary)
+
+  tbl <- tbl_ard_summary(
+    cards     = ard_demog,
+    by        = ___,                   # the grouping variable
+    variables = c(___, ___)            # the two analysis variables
+  ) %>%
+    modify_caption("Table 14.1.1 — Demographic Characteristics (Safety Population)")
+
+  tbl
+}
+```
+
+```{r ch6-ex2-hint-1}
+# by        = TRT01A
+# variables = c(AGE, SEX)
+```
+
+```{r ch6-ex2-solution}
+if (!requireNamespace("gtsummary", quietly = TRUE)) {
+  cat("Install gtsummary to run this exercise.\n")
+} else {
+  library(gtsummary)
+  tbl <- tbl_ard_summary(
+    cards     = ard_demog,
+    by        = TRT01A,
+    variables = c(AGE, SEX)
+  ) %>%
+    modify_caption("Table 14.1.1 — Demographic Characteristics (Safety Population)")
+  tbl
+}
+# This is the current state of the art end-to-end in open source R:
+# {cards} produces the ARD, {gtsummary} renders the table.
+# What's NOT here: any link back to ARM-TS — no record of WHY the Safety Pop
+# was chosen, no SAP reference, no AnalysisSet ID, no analysis purpose flag.
+# That's the arsbridge gap.
+```
+
+---
+
+## Exercise 6.3 — Identify the Tool for Each Capability {data-progressive=FALSE}
+
+Fill in the right tool (or `"MISSING / arsbridge"`) for each ARS-related capability.
+
+```{r ch6-ex3, exercise=TRUE, exercise.lines=20}
+tool_coverage <- tribble(
+  ~capability,                                        ~tool,
+  "Generate ARD for continuous variables",            ___,
+  "Generate KM ARD at fixed timepoints",              ___,
+  "Render an ARD as a clinical table",                ___,
+  "Write an ADaM dataset as Dataset-JSON for FDA",    ___,
+  "Parse an ARM-TS JSON file into R",                 ___,
+  "Generate ARM-TS from an annotated shell",          ___,
+  "Validate ARD against ARM-TS",                      ___
+)
+
+tool_coverage
+```
+
+```{r ch6-ex3-hint-1}
+# Choose from:
+#   "{cards}"
+#   "{cardx}"
+#   "{gtsummary}"
+#   "{datasetjson}"
+#   "MISSING / arsbridge"
+```
+
+```{r ch6-ex3-solution}
+tool_coverage <- tribble(
+  ~capability,                                        ~tool,
+  "Generate ARD for continuous variables",            "{cards}",
+  "Generate KM ARD at fixed timepoints",              "{cardx}",
+  "Render an ARD as a clinical table",                "{gtsummary}",
+  "Write an ADaM dataset as Dataset-JSON for FDA",    "{datasetjson}",
+  "Parse an ARM-TS JSON file into R",                 "MISSING / arsbridge",
+  "Generate ARM-TS from an annotated shell",          "MISSING / arsbridge",
+  "Validate ARD against ARM-TS",                      "MISSING / arsbridge"
+)
+tool_coverage
+# Three rows of MISSING — and each of them is one arsbridge function:
+#   parse_ars(), shell_to_ars(), validate_ard().
+```
+
+---
+
+## Exercise 6.4 — Read the AnalysisSet Manually (the gap exercise) {data-progressive=FALSE}
+
+`{cards}` does **not** read ARM-TS. So today, even though the AnalysisSet `AS002` is sitting
+right there in `re_json`, you (the programmer) have to **manually translate it** into a
+filter. Do exactly that — and notice how mechanical it is. This mechanical step is what
+`arsbridge::parse_ars()` will automate.
+
+```{r ch6-ex4, exercise=TRUE, exercise.lines=18}
+# Pull the AS002 condition out of the parsed ARM-TS
+cond <- re_json$analysisSets[[2]]$condition
+cond
+
+# Apply it MANUALLY as a dplyr filter on adsl,
+# then hand the filtered data to ard_continuous() for AGE by TRT01A
+adsl_filtered <- adsl %>%
+  filter(.data[[cond$___]] == cond$value[[1]])     # which field carries the variable name?
+
+ard <- ard_continuous(
+  data = adsl_filtered, by = TRT01A, variables = AGE
+)
+
+cat("Rows in filtered ADSL:", nrow(adsl_filtered), "\n")
+cat("Rows in ARD:          ", nrow(ard), "\n")
+```
+
+```{r ch6-ex4-hint-1}
+# cond has these fields: dataset, variable, comparator, value
+# You want the VARIABLE name to build a dplyr filter on that column
+```
+
+```{r ch6-ex4-solution}
+cond <- re_json$analysisSets[[2]]$condition
+adsl_filtered <- adsl %>%
+  filter(.data[[cond$variable]] == cond$value[[1]])
+
+ard <- ard_continuous(
+  data = adsl_filtered, by = TRT01A, variables = AGE
+)
+cat("Rows in filtered ADSL:", nrow(adsl_filtered), "\n")
+cat("Rows in ARD:          ", nrow(ard), "\n")
+# That filter() call is mechanical translation from a WhereClause.
+# arsbridge::parse_ars() will return a $analysis_sets[["AS002"]]$filter_fn
+# that you can call directly: adsl %>% filter_fn() — no manual rewriting.
+```
+
+---
+
+## Chapter 6 Knowledge Check
+
+```{r ch6-quiz, echo=FALSE}
+quiz(
+  caption = "Chapter 6 — Check Your Understanding",
+
+  question(
+    "Which R package generates ARD data frames from ADaM datasets?",
+    answer("{gtsummary}"),
+    answer("{cards}", correct = TRUE),
+    answer("{datasetjson}"),
+    answer("{admiral}"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Which package extends {cards} with Kaplan-Meier, regression, and inferential statistics?",
+    answer("{cardx}", correct = TRUE),
+    answer("{rtables}"),
+    answer("{gtsummary}"),
+    answer("{tfrmt}"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Which package handles dataset exchange (e.g., the FDA Pilot 4 submission format)?",
+    answer("{cards}"),
+    answer("{datasetjson}", correct = TRUE),
+    answer("{admiral}"),
+    answer("{gtsummary}"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "What capability is MISSING from the current open-source R ecosystem for ARS?",
+    answer("Generating ARDs from continuous variables"),
+    answer("Creating tables from ARD"),
+    answer(
+      "Parsing ARM-TS JSON, applying its AnalysisSets, and validating ARD traceability against it",
+      correct = TRUE
+    ),
+    answer("Reading SAS XPT files"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "When using {cards} today, who is responsible for applying the AnalysisSet (population filter)?",
+    answer("{cards} reads the ARM-TS and applies it automatically"),
+    answer("The PROGRAMMER applies it manually with dplyr::filter() before calling ard_*()", correct = TRUE),
+    answer("{gtsummary} applies it during table rendering"),
+    answer("It is applied by the regulator after submission"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Why does the open-source ARM-TS gap matter even though `siera` exists?",
+    answer(
+      "siera is commercial and closed-source; pharmaverse and academic users need an open-source equivalent",
+      correct = TRUE
+    ),
+    answer("siera does not generate ARDs"),
+    answer("siera cannot read SAS datasets"),
+    answer("siera does not exist"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Which arsbridge function would replace the manual `filter(.data[[cond$variable]] == cond$value)` pattern from Exercise 6.4?",
+    answer("ars_to_shell()"),
+    answer("parse_ars() (returns ready-to-use filter functions per AnalysisSet)", correct = TRUE),
+    answer("validate_ard()"),
+    answer("ars_summary()"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  )
+)
+```
+
+---
+
+## Chapter 6 Summary {.congratulations}
+
+You now know:
+
+- **`{cards}` + `{cardx}`** generate ARDs from ADaM — fully covered
+- **`{gtsummary}` and `{rtables}`** render tables from ARDs — fully covered
+- **`{datasetjson}`** handles dataset exchange (the format used in FDA Pilot 4) — fully covered
+- **The ARM-TS layer** — parsing, generating from shells, rendering as shells, validating
+  ARD against ARM-TS — is **entirely uncovered** in open-source R
+- **`siera`** is the only existing tool in this space but is commercial, closed, and tied to
+  one vendor
+- You've assembled the existing stack end-to-end (`ard_stack()` → `tbl_ard_summary()`) and
+  felt firsthand the mechanical work that `arsbridge::parse_ars()` will automate
+
+**Next:** Chapter 7 — Package Design Roadmap (the five `arsbridge` functions, the build
+sequence, and the launch plan)

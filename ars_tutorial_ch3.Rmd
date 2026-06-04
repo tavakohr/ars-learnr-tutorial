@@ -1,0 +1,707 @@
+---
+title: "CDISC Analysis Results Standard (ARS) — Interactive Training"
+subtitle: "Chapter 3: ARM-TS Deep Dive"
+author: "Hamid Tavakoli, MD, MSc"
+output:
+  learnr::tutorial:
+    progressive: true
+    allow_skip: true
+    css: www/custom.css
+runtime: shiny_prerendered
+description: >
+  Chapter 3 walks through every major ARM-TS object with full JSON examples and
+  the equivalent annotated-shell annotation. You will dissect the running case
+  study — a safety AE summary by treatment arm — and build ARM-TS objects (an
+  AnalysisMethod, an Analysis) by hand from a shell annotation.
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(gradethis)
+library(pharmaverseadam)
+library(pharmaversesdtm)
+library(dplyr)
+library(cards)
+library(jsonlite)
+library(glue)
+
+tutorial_options(exercise.timelimit = 60)
+gradethis_setup()
+
+# Load pharmaverse ADaM datasets
+data("adsl",  package = "pharmaverseadam")
+data("adae",  package = "pharmaverseadam")
+data("adtte", package = "pharmaverseadam")
+data("adlb",  package = "pharmaverseadam")
+
+adsl_safe <- adsl %>% filter(SAFFL == "Y")
+adsl_itt  <- adsl %>% filter(!is.na(ARM) & ARM != "")
+adae_teae <- adae %>% filter(TRTEMFL == "Y")
+
+re_json <- jsonlite::read_json("data/reporting_event.json")
+```
+
+---
+
+## Chapter 3: ARM-TS Deep Dive
+
+This chapter walks through every major ARM-TS object with full JSON examples. Each section
+includes the equivalent annotated-shell annotation so you can see exactly how your existing
+knowledge maps to the formal model.
+
+The examples use a running case study: **a safety table showing adverse event summary
+statistics by treatment arm in the Safety Population** — a table type you have programmed many
+times.
+
+---
+
+### 3.1 ReportingEvent
+
+The **root container**. Represents one reporting deliverable — typically one CSR or one
+interim analysis.
+
+**Key fields**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id`, `name` | Yes | Unique identifier and display name |
+| `version` | No | Version number (increment on updates) |
+| `mainListOfContents` | Yes | Structured table of contents |
+| `referenceDocuments` | No | External documents (SAP, programs) |
+| `analysisSets`, `dataSubsets`, `analysisGroupings`, `methods`, `analyses`, `outputs` | No | The object collections |
+
+**Annotated-shell equivalent.** The annotated-shell header block — study number, protocol
+title, SAP version, date. The `ReportingEvent` is the machine-readable version of that header.
+
+---
+
+### 3.2 ReferenceDocument
+
+Links the reporting event to **external files**. This is how ARS creates a formal link to
+the SAP.
+
+```json
+{
+  "id": "SAP001",
+  "name": "Statistical Analysis Plan v2.0",
+  "location": "documents/XYZ001_SAP_v2.0.pdf",
+  "description": "Final SAP approved 15-Jan-2025"
+}
+```
+
+**Annotated-shell equivalent.** The *"per Section X.X of SAP"* text you write. In ARM-TS this
+becomes a formal `DocumentReference` (with optional `pageRefs`) inside the `Analysis` object,
+pointing to the `ReferenceDocument` you define here.
+
+---
+
+### 3.3 AnalysisSet
+
+Defines a **subject population**. Your population flags in ADSL (`ITTFL`, `SAFFL`, `PPSFL`)
+become `AnalysisSet` objects.
+
+**Simple condition (single flag)**
+
+```json
+{
+  "id": "AS002",
+  "name": "Safety Population",
+  "condition": {
+    "dataset": "ADSL",
+    "variable": "SAFFL",
+    "comparator": "EQ",
+    "value": ["Y"]
+  }
+}
+```
+
+**Compound expression (multiple flags)**
+
+```json
+{
+  "id": "AS003",
+  "name": "Per-Protocol Population",
+  "compoundExpression": {
+    "logicalOperator": "AND",
+    "whereClauses": [
+      { "condition": { "dataset": "ADSL", "variable": "PPSFL",   "comparator": "EQ", "value": ["Y"] } },
+      { "condition": { "dataset": "ADSL", "variable": "COMPLFL", "comparator": "EQ", "value": ["Y"] } }
+    ]
+  }
+}
+```
+
+Exactly one of `condition` or `compoundExpression` should be present.
+
+**Annotated-shell equivalent.** *"SAFFL='Y' from ADSL"* or *"Safety Population"*. You define
+it **once** as `AS002`, and every analysis referencing the Safety Population just sets
+`"analysisSetId": "AS002"` — this is **Principle 1 (reuse)** in action.
+
+---
+
+### 3.4 DataSubset
+
+A filter on **data records** (rows in an analysis dataset), not on subjects.
+
+**Key distinction**
+
+- `AnalysisSet` = *who* is in the analysis (subject-level, usually from ADSL)
+- `DataSubset` = *which records* to use (row-level, on the analysis dataset itself)
+
+```json
+{
+  "id": "DS001",
+  "name": "Overall Survival Parameter",
+  "condition": {
+    "dataset": "ADTTE",
+    "variable": "PARAMCD",
+    "comparator": "EQ",
+    "value": ["OS"]
+  }
+}
+```
+
+**Annotated-shell equivalent.** *"PARAMCD='OS'"* or *"AVISIT='Week 24'"*. The distinction
+matters: your population flag selects **subjects**; your `PARAMCD` filter selects **records
+within those subjects' data**.
+
+---
+
+### 3.5 GroupingFactor and Group
+
+Defines how to subdivide the analysis. Treatment arm, sex, age group, visit — these are all
+grouping factors.
+
+**GroupingFactor — key fields**
+
+| Field | Description |
+|-------|-------------|
+| `groupingDataset`, `groupingVariable` | Where the grouping variable lives |
+| `dataDriven` | `true` = groups derived from data; `false` = groups pre-specified |
+| `groups` | Pre-specified groups (when `dataDriven = false`) |
+
+**Pre-specified (treatment arm)**
+
+```json
+{
+  "id": "GF001",
+  "name": "Treatment Arm",
+  "groupingDataset": "ADSL",
+  "groupingVariable": "TRT01A",
+  "dataDriven": false,
+  "groups": [
+    { "id": "G001", "name": "Drug XYZ 10mg",
+      "condition": { "dataset": "ADSL", "variable": "TRT01A", "comparator": "EQ", "value": ["Drug XYZ 10mg"] } },
+    { "id": "G002", "name": "Placebo",
+      "condition": { "dataset": "ADSL", "variable": "TRT01A", "comparator": "EQ", "value": ["Placebo"] } }
+  ]
+}
+```
+
+**Data-driven (visit)** — groups come from the data:
+
+```json
+{
+  "id": "GF002",
+  "name": "Analysis Visit",
+  "groupingDataset": "ADLB",
+  "groupingVariable": "AVISIT",
+  "dataDriven": true
+}
+```
+
+**Annotated-shell equivalent.** The **column headers** in your tables. A table with columns
+"Drug XYZ 10mg" and "Placebo" reflects a `GroupingFactor` with two pre-specified `Groups`.
+Each stored `OperationResult` carries a `resultGroup` linking it back to `G001` or `G002`.
+
+---
+
+### 3.6 AnalysisMethod
+
+Defines one or more **statistical operations** that can be applied to any analysis variable.
+Methods are reusable across analyses.
+
+**Operations — key fields**
+
+| Field | Description |
+|-------|-------------|
+| `id`, `name`, `order` | Identifier, name, position within the method |
+| `resultPattern` | Display format (e.g., `"XX.X"`, `"XX.XX"`) |
+| `referencedOperationRelationships` | How this operation uses results from another (e.g., NUMERATOR / DENOMINATOR for %) |
+
+**Continuous summary**
+
+```json
+{
+  "id": "M001",
+  "name": "Summary Statistics - Continuous",
+  "operations": [
+    { "id": "O001", "name": "n",      "order": 1, "resultPattern": "XXX"    },
+    { "id": "O002", "name": "Mean",   "order": 2, "resultPattern": "XXX.X"  },
+    { "id": "O003", "name": "SD",     "order": 3, "resultPattern": "XXX.XX" },
+    { "id": "O004", "name": "Median", "order": 4, "resultPattern": "XXX.X"  },
+    { "id": "O005", "name": "Min",    "order": 5, "resultPattern": "XXX"    },
+    { "id": "O006", "name": "Max",    "order": 6, "resultPattern": "XXX"    }
+  ]
+}
+```
+
+**Count + percentage (uses ReferencedOperationRelationship)**
+
+```json
+{
+  "id": "M002",
+  "name": "Count and Percentage",
+  "operations": [
+    { "id": "O007", "name": "Count",      "order": 1, "resultPattern": "XXX" },
+    { "id": "O008", "name": "Percentage", "order": 2, "resultPattern": "XX.X",
+      "referencedOperationRelationships": [
+        { "id": "ROR001",
+          "referencedOperationRole": { "controlledTerm": "DENOMINATOR" },
+          "operationId": "O009",
+          "analysisId": "AN_DENOM_001" }
+      ] },
+    { "id": "O009", "name": "Denominator", "order": 3, "resultPattern": "XXX" }
+  ]
+}
+```
+
+**Annotated-shell equivalent.** *"n (%), denominator = N in safety population"*. The
+`AnalysisMethod` encodes this formally; the `resultPattern` encodes your format string;
+the `ReferencedOperationRelationship` with `DENOMINATOR` encodes where the N comes from.
+
+---
+
+### 3.7 Analysis — The Central Object
+
+Each `Analysis` ties together: a dataset, a variable, a population, optional data filter,
+optional grouping factors, and a method.
+
+**Key fields**
+
+| Field | Description |
+|-------|-------------|
+| `dataset`, `variable` | The analysis dataset + variable (e.g., `ADAE` + `USUBJID`) |
+| `analysisSetId` | References an `AnalysisSet` |
+| `dataSubsetId` | References a `DataSubset` (optional) |
+| `orderedGroupings` | Ordered list of `GroupingFactor` references |
+| `methodId` | References an `AnalysisMethod` |
+| `reason` | SPECIFIED IN PROTOCOL / SPECIFIED IN SAP / DATA DRIVEN |
+| `purpose` | PRIMARY / SECONDARY / EXPLORATORY OUTCOME MEASURE |
+| `documentRefs` | SAP references (with optional page numbers) |
+| `programmingCode` | Code, or reference to a program file |
+| `results` | The ARD — `[OperationResult]` |
+
+**Shell row → ARM-TS Analysis field mapping**
+
+| Annotated-shell annotation text | ARS field |
+|--------------------------------|-----------|
+| "USUBJID count from ADAE" | `dataset: "ADAE"`, `variable: "USUBJID"` |
+| "Safety Population (SAFFL='Y')" | `analysisSetId: "AS002"` |
+| "By treatment arm (TRT01A)" | `orderedGroupings: [{groupingId: "GF001", resultsByGroup: true}]` |
+| "n (%)" | `methodId: "M002"` |
+| "per Section 10.1 of SAP, pp. 42–44" | `documentRefs: [{referenceDocumentId: "SAP001", pageRefs: [...]}]` |
+| "program: t_ae_summary.R" | `programmingCode.documentRef` |
+
+This six-row mapping is the whole game. Every annotated-shell row decomposes into these
+fields of one `Analysis` object.
+
+---
+
+### 3.8 Output and OutputDisplay
+
+Defines the TFL — its file format, title, footnotes, and how analyses map into displays.
+
+```json
+{
+  "id": "OUT001",
+  "name": "Table 14.3.1 - Summary of Adverse Events",
+  "fileSpecifications": [
+    { "name": "Table 14.3.1 RTF", "fileType": { "controlledTerm": "rtf" },
+      "location": "output/t_ae_summary.rtf" }
+  ],
+  "displays": [
+    { "order": 1, "display": {
+        "id": "DISP001",
+        "displayTitle": "Table 14.3.1 Summary of Treatment-Emergent Adverse Events",
+        "displaySections": [
+          { "sectionType": "Title", "orderedSubSections": [{ "order": 1, "subSection": {
+              "id": "TITLE001",
+              "text": "Table 14.3.1 Summary of Treatment-Emergent Adverse Events" }}] },
+          { "sectionType": "Footnote", "orderedSubSections": [{ "order": 1, "subSection": {
+              "id": "FN001",
+              "text": "TEAE = Treatment-Emergent Adverse Event. Subjects counted once per preferred term." }}] }
+        ] } }
+  ]
+}
+```
+
+**Annotated-shell equivalent.** The **shell itself** — table number, title, footnotes,
+abbreviations — maps directly to `Output` and `OutputDisplay`. Your title cell =
+`displayTitle`. Your footnote cells = `DisplaySection` with `sectionType: "Footnote"`.
+
+---
+
+### 3.9 AnalysisProgrammingCodeTemplate
+
+When a method is applied to many analyses with **minor variations** (e.g., different
+`PARAMCD` values), the `codeTemplate` mechanism lets you write the code once with replacement
+parameters.
+
+```json
+{
+  "id": "M003",
+  "name": "KM Analysis Template",
+  "codeTemplate": {
+    "context": "R version 4.3.1",
+    "code": "km_fit <- survfit(Surv({{AVAR}}, {{CNSR_FLAG}}) ~ TRT01A, data = adtte %>% filter(PARAMCD == '{{PARAMCD}}' & ITTFL == 'Y'))",
+    "parameters": [
+      { "name": "AVAR",      "valueSource": "analysis.variable" },
+      { "name": "PARAMCD",   "value": ["OS", "PFS", "DOR"] },
+      { "name": "CNSR_FLAG", "value": ["CNSR"] }
+    ]
+  }
+}
+```
+
+Individual analyses reference this template and supply their specific parameter values.
+
+---
+
+## Hands-On: Build ARM-TS Objects
+
+### What's in the sample `re_json`?
+
+```{r ch3-preview, exercise=FALSE, echo=TRUE}
+# AnalysisSets defined in the sample
+sapply(re_json$analysisSets, function(x) paste0(x$id, " — ", x$name))
+```
+
+```{r ch3-preview-method, exercise=FALSE, echo=TRUE}
+# Operations within Method M001
+sapply(re_json$methods[[1]]$operations, function(o)
+  paste0(o$id, " — ", o$name, " (", o$resultPattern, ")"))
+```
+
+---
+
+## Exercise 3.1 — Read an AnalysisSet WhereClause {data-progressive=FALSE}
+
+Extract the Safety Population (`AS002`) from the sample ARM-TS and print its filter condition
+as a human-readable string of the form `"DATASET.VARIABLE COMPARATOR 'VALUE'"`. This is the
+core logic of `arsbridge::ars_to_shell()`.
+
+```{r ch3-ex1, exercise=TRUE, exercise.lines=12}
+# Step 1: index into analysisSets for AS002 (Safety Population)
+as_safe <- re_json$analysisSets[[___]]   # which index?
+
+# Step 2: assemble the readable string from the condition
+glue::glue(
+  "{as_safe$condition$dataset}.",
+  "{as_safe$condition$___} ",            # variable
+  "{as_safe$condition$___} ",            # comparator
+  "'{as_safe$condition$value[[1]]}'"
+)
+```
+
+```{r ch3-ex1-hint-1}
+# AS001 is ITT (index 1), AS002 is Safety (index 2)
+# The condition has: dataset, variable, comparator, value
+```
+
+```{r ch3-ex1-solution}
+as_safe <- re_json$analysisSets[[2]]
+glue::glue(
+  "{as_safe$condition$dataset}.",
+  "{as_safe$condition$variable} ",
+  "{as_safe$condition$comparator} ",
+  "'{as_safe$condition$value[[1]]}'"
+)
+# "ADSL.SAFFL EQ 'Y'"
+# This is the core logic of arsbridge::ars_to_shell().
+```
+
+```{r ch3-ex1-check}
+grade_result(
+  pass_if(~ as.character(.result) == "ADSL.SAFFL EQ 'Y'",
+          "Correct — that's the Safety Population WhereClause as a human-readable string. arsbridge::ars_to_shell() does exactly this for every AnalysisSet, DataSubset, and Group in the ARM-TS."),
+  fail_if(~ TRUE,
+          "The Safety Population is AS002 (index 2). Make sure you used $variable and $comparator inside the glue() string.")
+)
+```
+
+---
+
+## Exercise 3.2 — Build an AnalysisMethod by Hand {data-progressive=FALSE}
+
+Create an R list representing the **"n, mean, SD, median, min, max"** continuous summary method.
+Follow the ARS object structure exactly — `id`, `name`, `operations`, and each operation has
+`id`, `name`, `order`, `resultPattern`.
+
+```{r ch3-ex2, exercise=TRUE, exercise.lines=20}
+m_continuous <- list(
+  id   = "M001",
+  name = "Summary Statistics - Continuous",
+  operations = list(
+    list(id = "O001", name = "n",      order = 1L, resultPattern = "XXX"),
+    list(id = "O002", name = ___,      order = 2L, resultPattern = "XXX.X"),    # fill in
+    list(id = "O003", name = "SD",     order = 3L, resultPattern = ___),         # 2 dp
+    list(id = "O004", name = "Median", order = 4L, resultPattern = "XXX.X"),
+    list(id = "O005", name = ___,      order = 5L, resultPattern = "XXX"),       # minimum
+    list(id = "O006", name = "Max",    order = 6L, resultPattern = "XXX")
+  )
+)
+
+# How many operations does this method have?
+length(m_continuous$operations)
+```
+
+```{r ch3-ex2-hint-1}
+# The six standard continuous statistics are:
+#   n, Mean, SD, Median, Min, Max
+# resultPattern uses X placeholders to encode display precision:
+#   "XXX"     = integer
+#   "XXX.X"   = 1 decimal place
+#   "XXX.XX"  = 2 decimal places
+```
+
+```{r ch3-ex2-solution}
+m_continuous <- list(
+  id   = "M001",
+  name = "Summary Statistics - Continuous",
+  operations = list(
+    list(id = "O001", name = "n",      order = 1L, resultPattern = "XXX"),
+    list(id = "O002", name = "Mean",   order = 2L, resultPattern = "XXX.X"),
+    list(id = "O003", name = "SD",     order = 3L, resultPattern = "XXX.XX"),
+    list(id = "O004", name = "Median", order = 4L, resultPattern = "XXX.X"),
+    list(id = "O005", name = "Min",    order = 5L, resultPattern = "XXX"),
+    list(id = "O006", name = "Max",    order = 6L, resultPattern = "XXX")
+  )
+)
+length(m_continuous$operations)
+# 6 operations — this method can now be referenced by any Analysis
+# that needs summary stats on a continuous variable.
+```
+
+---
+
+## Exercise 3.3 — Build a Group with a WhereClause {data-progressive=FALSE}
+
+You need a `Group` object representing **"Xanomeline High Dose"** within the Treatment Arm
+grouping factor. The group is defined by `ADSL.TRT01A == "Xanomeline High Dose"`.
+
+```{r ch3-ex3, exercise=TRUE, exercise.lines=15}
+g_high <- list(
+  id   = ___,                       # "G001"
+  name = "Xanomeline High Dose",
+  condition = list(
+    dataset    = "ADSL",
+    variable   = ___,                # which ADSL variable identifies the treatment arm?
+    comparator = ___,                # which ARS comparator?
+    value      = list("Xanomeline High Dose")
+  )
+)
+
+str(g_high)
+```
+
+```{r ch3-ex3-solution}
+g_high <- list(
+  id   = "G001",
+  name = "Xanomeline High Dose",
+  condition = list(
+    dataset    = "ADSL",
+    variable   = "TRT01A",
+    comparator = "EQ",
+    value      = list("Xanomeline High Dose")
+  )
+)
+str(g_high)
+# Notice the Group's condition has the SAME structure as an AnalysisSet's condition.
+# This is why mastering WhereClause once unlocks AnalysisSet, DataSubset, and Group.
+```
+
+---
+
+## Exercise 3.4 — Capstone: Annotated Shell → Analysis Object {data-progressive=FALSE}
+
+You are a lead programmer. Your annotated shell for Table 14.1.1 says:
+
+> *"n, mean, SD, median, min, max from ADSL.AGE, Safety Population (SAFFL='Y'), by treatment
+> arm (TRT01A), per SAP Section 8.1"*
+
+Build the `Analysis` object that encodes this annotation.
+
+```{r ch3-ex4, exercise=TRUE, exercise.lines=22}
+an_age <- list(
+  id      = "AN001",
+  name    = "Age Summary by Treatment Arm - Safety Population",
+  reason  = list(controlledTerm = "SPECIFIED IN SAP"),
+  purpose = list(controlledTerm = ___),       # Primary, Secondary, or Exploratory?
+  dataset  = ___,                              # which ADaM dataset?
+  variable = ___,                              # which variable?
+  analysisSetId = ___,                         # which AnalysisSet ID? (Safety = AS002)
+  orderedGroupings = list(
+    list(order = 1L, groupingId = ___, resultsByGroup = TRUE)   # which GF?
+  ),
+  methodId = ___                               # which Method? (n, mean, SD, median, min, max)
+)
+
+str(an_age)
+```
+
+```{r ch3-ex4-hint-1}
+# - It's a demographic baseline summary → PRIMARY OUTCOME MEASURE
+# - Source: ADSL.AGE
+# - Population: Safety = AS002
+# - Grouping: Treatment Arm = GF001
+# - Method: continuous summary = M001
+```
+
+```{r ch3-ex4-solution}
+an_age <- list(
+  id      = "AN001",
+  name    = "Age Summary by Treatment Arm - Safety Population",
+  reason  = list(controlledTerm = "SPECIFIED IN SAP"),
+  purpose = list(controlledTerm = "PRIMARY OUTCOME MEASURE"),
+  dataset  = "ADSL",
+  variable = "AGE",
+  analysisSetId = "AS002",
+  orderedGroupings = list(
+    list(order = 1L, groupingId = "GF001", resultsByGroup = TRUE)
+  ),
+  methodId = "M001"
+)
+str(an_age)
+# One row of an annotated shell → one Analysis object.
+# Field-by-field, the information content is identical.
+```
+
+```{r ch3-ex4-check}
+grade_result(
+  pass_if(~ identical(.result$dataset, "ADSL") &&
+            identical(.result$variable, "AGE") &&
+            identical(.result$analysisSetId, "AS002") &&
+            identical(.result$methodId, "M001") &&
+            identical(.result$orderedGroupings[[1]]$groupingId, "GF001"),
+          "Correct — that's a complete ARM-TS Analysis object. This is the level of structure that arsbridge::shell_to_ars() will produce from your annotation text."),
+  fail_if(~ TRUE,
+          "Check: dataset='ADSL', variable='AGE', analysisSetId='AS002' (Safety), groupingId='GF001' (Treatment Arm), methodId='M001'.")
+)
+```
+
+---
+
+## Chapter 3 Knowledge Check
+
+```{r ch3-quiz, echo=FALSE}
+quiz(
+  caption = "Chapter 3 — Check Your Understanding",
+
+  question(
+    "Where in ARM-TS is the link from an Analysis to a specific SAP section recorded?",
+    answer("In ReportingEvent.description"),
+    answer("In Analysis.documentRefs, pointing to a ReferenceDocument", correct = TRUE),
+    answer("In AnalysisMethod.codeTemplate"),
+    answer("In Output.fileSpecifications"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Your shell says: 'PARAMCD = OS in ADTTE'. Which ARM-TS object encodes this?",
+    answer("AnalysisSet"),
+    answer("DataSubset", correct = TRUE),
+    answer("GroupingFactor"),
+    answer("AnalysisMethod"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "When `dataDriven = false` on a GroupingFactor, what does that imply?",
+    answer("The groups must be pre-specified as `groups` with WhereClauses", correct = TRUE),
+    answer("The groups are derived from the data at runtime"),
+    answer("Only one group is allowed"),
+    answer("The grouping factor is not used in any analysis"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "An AnalysisMethod's `resultPattern` of 'XXX.XX' means what?",
+    answer("The operation produces 3 integer digits and 2 decimal digits in the formatted output", correct = TRUE),
+    answer("There are 5 operations in the method"),
+    answer("The result is censored at 3 significant figures"),
+    answer("It is a placeholder for a percentage symbol"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "In Method M002 (Count and Percentage), why does the Percentage operation carry a `referencedOperationRelationships` block?",
+    answer(
+      "To formally encode that the Percentage operation depends on the Denominator operation (NUMERATOR / DENOMINATOR roles)",
+      correct = TRUE
+    ),
+    answer("To indicate the operation is optional"),
+    answer("To specify which programmer wrote the code"),
+    answer("To version-control the operation"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "The annotated-shell phrase 'By treatment arm (TRT01A)' maps to which field of an Analysis object?",
+    answer("dataset"),
+    answer("orderedGroupings (referencing a GroupingFactor)", correct = TRUE),
+    answer("analysisSetId"),
+    answer("documentRefs"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "What is the purpose of AnalysisProgrammingCodeTemplate?",
+    answer(
+      "To write code ONCE with replacement parameters (e.g., PARAMCD) and reuse it across many analyses that vary only in those parameters",
+      correct = TRUE
+    ),
+    answer("To store the SAS macro that produced the table"),
+    answer("To define the table title and footnote text"),
+    answer("To encode the resultPattern for each operation"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Which Output sub-object holds the table TITLE and FOOTNOTE text?",
+    answer("Output.fileSpecifications"),
+    answer("OutputDisplay.displaySections (with sectionType 'Title' / 'Footnote')", correct = TRUE),
+    answer("Analysis.documentRefs"),
+    answer("ReportingEvent.label"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  )
+)
+```
+
+---
+
+## Chapter 3 Summary {.congratulations}
+
+You have now seen every major ARM-TS object with:
+
+- **Full field definitions** for `ReportingEvent`, `ReferenceDocument`, `AnalysisSet`,
+  `DataSubset`, `GroupingFactor` / `Group`, `AnalysisMethod` / `Operation`, `Analysis`,
+  `Output` / `OutputDisplay`, and `AnalysisProgrammingCodeTemplate`
+- **JSON examples** grounded in a realistic AE summary table
+- **Explicit field-by-field mapping** to what you already write in annotated shells
+- **Hands-on practice** building an `AnalysisMethod`, a `Group`, and a full `Analysis` object
+
+**The key insight:** everything in an annotated shell has an ARM-TS equivalent. The information
+content is identical; the representation is **machine-readable JSON vs. human-readable
+annotation text**.
+
+**Next:** Chapter 4 — ARD Deep Dive (what goes inside `Analysis.results` when analyses are
+actually run, and how `{cards}` generates flat ARD data frames from ADaM data)

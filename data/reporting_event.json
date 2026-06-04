@@ -1,0 +1,65 @@
+{
+  "id": "RE001",
+  "version": 1,
+  "name": "CDISC Pilot Study CSR",
+  "referenceDocuments": [
+    { "id": "SAP001", "name": "Statistical Analysis Plan v1.0", "location": "sap_v1.pdf" }
+  ],
+  "analysisSets": [
+    {
+      "id": "AS001", "name": "Intent-to-Treat Population",
+      "condition": { "dataset": "ADSL", "variable": "ARM", "comparator": "NE", "value": [""] }
+    },
+    {
+      "id": "AS002", "name": "Safety Population",
+      "condition": { "dataset": "ADSL", "variable": "SAFFL", "comparator": "EQ", "value": ["Y"] }
+    }
+  ],
+  "analysisGroupings": [
+    {
+      "id": "GF001", "name": "Treatment Arm", "groupingDataset": "ADSL",
+      "groupingVariable": "TRT01A", "dataDriven": false,
+      "groups": [
+        { "id": "G001", "name": "Xanomeline High Dose",
+          "condition": { "dataset": "ADSL", "variable": "TRT01A", "comparator": "EQ", "value": ["Xanomeline High Dose"] } },
+        { "id": "G002", "name": "Placebo",
+          "condition": { "dataset": "ADSL", "variable": "TRT01A", "comparator": "EQ", "value": ["Placebo"] } }
+      ]
+    }
+  ],
+  "methods": [
+    {
+      "id": "M001", "name": "Summary Statistics - Continuous",
+      "operations": [
+        { "id": "O001", "name": "n",      "order": 1, "resultPattern": "XXX"    },
+        { "id": "O002", "name": "Mean",   "order": 2, "resultPattern": "XXX.X"  },
+        { "id": "O003", "name": "SD",     "order": 3, "resultPattern": "XXX.XX" },
+        { "id": "O004", "name": "Median", "order": 4, "resultPattern": "XXX.X"  },
+        { "id": "O005", "name": "Min",    "order": 5, "resultPattern": "XXX"    },
+        { "id": "O006", "name": "Max",    "order": 6, "resultPattern": "XXX"    }
+      ]
+    }
+  ],
+  "analyses": [
+    {
+      "id": "AN001", "name": "Age Summary by Treatment Arm",
+      "reason": { "controlledTerm": "SPECIFIED IN SAP" },
+      "purpose": { "controlledTerm": "PRIMARY OUTCOME MEASURE" },
+      "dataset": "ADSL", "variable": "AGE",
+      "analysisSetId": "AS002",
+      "orderedGroupings": [
+        { "order": 1, "groupingId": "GF001", "resultsByGroup": true }
+      ],
+      "methodId": "M001",
+      "documentRefs": [
+        { "referenceDocumentId": "SAP001", "pageRefs": [{ "refType": "PhysicalRef", "firstPage": 12, "lastPage": 12 }] }
+      ],
+      "results": [
+        { "operationId": "O001", "resultGroups": [{"groupingId": "GF001", "groupId": "G001"}], "rawValue": "84",        "formattedValue": "84"   },
+        { "operationId": "O002", "resultGroups": [{"groupingId": "GF001", "groupId": "G001"}], "rawValue": "74.38095", "formattedValue": "74.4" },
+        { "operationId": "O001", "resultGroups": [{"groupingId": "GF001", "groupId": "G002"}], "rawValue": "86",        "formattedValue": "86"   },
+        { "operationId": "O002", "resultGroups": [{"groupingId": "GF001", "groupId": "G002"}], "rawValue": "75.20930", "formattedValue": "75.2" }
+      ]
+    }
+  ]
+}

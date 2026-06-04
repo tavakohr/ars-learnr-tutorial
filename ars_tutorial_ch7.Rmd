@@ -1,0 +1,721 @@
+---
+title: "CDISC Analysis Results Standard (ARS) — Interactive Training"
+subtitle: "Chapter 7: Package Design Roadmap — arsbridge"
+author: "Hamid Tavakoli, MD, MSc"
+output:
+  learnr::tutorial:
+    progressive: true
+    allow_skip: true
+    css: www/custom.css
+runtime: shiny_prerendered
+description: >
+  Chapter 7 lays out the v0.1 design for {arsbridge}: five functions
+  (parse_ars, ars_to_shell, shell_to_ars, validate_ard, ars_summary), the
+  internal WhereClause helpers, the build sequence, package infrastructure,
+  and the GitHub / LinkedIn launch strategy. You will prototype the core
+  helpers and sketch the parser by hand.
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(gradethis)
+library(pharmaverseadam)
+library(dplyr)
+library(jsonlite)
+library(glue)
+
+tutorial_options(exercise.timelimit = 60)
+gradethis_setup()
+
+data("adsl",  package = "pharmaverseadam")
+data("adae",  package = "pharmaverseadam")
+
+adsl_safe <- adsl %>% filter(SAFFL == "Y")
+re_json   <- jsonlite::read_json("data/reporting_event.json")
+```
+
+---
+
+## Chapter 7: Package Design Roadmap — `arsbridge`
+
+### 7.1 Package Concept
+
+`arsbridge` is an R package with a single clear purpose:
+
+> **Bridge the annotated-shell world and the ARS world — bidirectionally — and validate
+> traceability between ARM-TS and ARD.**
+
+It serves two audiences:
+
+1. **Practitioners with annotated shells** who want to adopt ARS without starting from
+   scratch
+2. **ARS adopters** who want a human-readable view of their ARM-TS files and a validator for
+   their pipeline
+
+---
+
+### 7.2 The Five v0.1 Functions
+
+| Function | Direction | Input | Output |
+|----------|-----------|-------|--------|
+| `parse_ars()` | — | ARM-TS JSON file path | R list (ARS object tree) |
+| `ars_to_shell()` | ARM-TS → Shell | ARS R list + output ID | Excel annotated shell |
+| `shell_to_ars()` | Shell → ARM-TS | Excel annotated shell | ARM-TS JSON file |
+| `validate_ard()` | Validate | ARS R list + ARD data frame | Validation report |
+| `ars_summary()` | Explore | ARS R list | Console summary |
+
+This is a complete, coherent v0.1. Each function is **independently useful**. Together they
+cover the full bridge concept.
+
+---
+
+### 7.3 `parse_ars()` — The Foundation
+
+**Purpose.** Read an ARM-TS JSON file; return a structured R list with elements indexed by
+object ID for fast lookup.
+
+**Signature**
+
+```r
+parse_ars(
+  file,            # Path to ARM-TS JSON
+  validate = TRUE  # Validate against ARS schema
+)
+```
+
+**Returns** an S3 object of class `"ars_reporting_event"` with named-list slots:
+
+- `$id`, `$name`, `$version`
+- `$reference_documents` — indexed by ID
+- `$analysis_sets`, `$data_subsets`, `$groupings`, `$methods`, `$analyses`, `$outputs` —
+  each indexed by ID
+
+**Why ID-indexed?** Because everything in ARM-TS is referenced by ID
+(`analysisSetId = "AS002"`, `methodId = "M001"`, etc.). ID-indexed lists make
+`re$analysis_sets[["AS002"]]` a constant-time lookup instead of a linear scan.
+
+---
+
+### 7.4 `ars_to_shell()` — Render ARM-TS as Annotated Excel
+
+**Purpose.** Generate a human-readable annotated shell in Excel from an ARM-TS object, for a
+specified output or for all outputs.
+
+**Signature**
+
+```r
+ars_to_shell(
+  re,                 # ARS reporting event (from parse_ars())
+  output_id = NULL,   # NULL → generate shells for all outputs
+  file      = "annotated_shell.xlsx",
+  style     = c("standard", "cdisc_pilot")
+)
+```
+
+**Output Excel columns** — one worksheet per output:
+
+| Column | ARM-TS source |
+|--------|---------------|
+| Table Number / Title | `Output.id` / `OutputDisplay.displayTitle` |
+| Dataset / Variable | `Analysis.dataset` / `Analysis.variable` |
+| Population (name + filter text) | `AnalysisSet.name` + generated from `condition` |
+| Data Filter | Generated from `DataSubset.condition` |
+| Grouping 1 / 2 | `GroupingFactor.name` (one or two) |
+| Method / Operations / Format | `AnalysisMethod.name`, `[Operation.name]`, `resultPattern` |
+| SAP Reference | Generated from `DocumentReference + PageRef` |
+| Program | `programmingCode.documentRef` |
+| Reason / Purpose | `Analysis.reason` / `Analysis.purpose` |
+
+The **core internal helper** turning WhereClause objects into filter text:
+
+```r
+where_clause_to_text <- function(wc) {
+  if (!is.null(wc$condition)) {
+    cond     <- wc$condition
+    val_str  <- paste0("'", unlist(cond$value), "'", collapse = ", ")
+    glue::glue("{cond$dataset}.{cond$variable} {cond$comparator} {val_str}")
+  } else if (!is.null(wc$compoundExpression)) {
+    op      <- wc$compoundExpression$logicalOperator
+    clauses <- sapply(wc$compoundExpression$whereClauses, where_clause_to_text)
+    if (op == "NOT") glue::glue("NOT ({clauses[1]})")
+    else paste(clauses, collapse = glue::glue(" {op} "))
+  }
+}
+```
+
+---
+
+### 7.5 `shell_to_ars()` — Parse Annotated Excel into ARM-TS
+
+**Purpose.** Read an annotated Excel shell and emit an ARM-TS JSON file.
+
+**Signature**
+
+```r
+shell_to_ars(
+  file,                              # Excel shell
+  study_id,                          # ReportingEvent ID
+  study_name,                        # ReportingEvent name
+  sap_file    = NULL,                # SAP PDF path (for ReferenceDocument)
+  output_file = "reporting_event.json",
+  template    = c("arsbridge_standard", "custom"),
+  col_mapping = NULL                 # For custom shell formats
+)
+```
+
+**The hardest internal function** — `text_to_where_clause()` — is the inverse of
+`where_clause_to_text()`. It parses text like `"ADSL.SAFFL EQ 'Y'"` into a
+`WhereClauseCondition`:
+
+```r
+text_to_where_clause <- function(text) {
+  pattern <- "^(\\w+)\\.(\\w+)\\s+(EQ|NE|GT|GE|LT|LE|IN|NOTIN)\\s+'(.+)'$"
+  m <- regmatches(text, regexec(pattern, text, perl = TRUE))[[1]]
+  list(
+    dataset    = m[2],
+    variable   = m[3],
+    comparator = m[4],
+    value      = list(m[5])
+  )
+}
+```
+
+For **v0.1**, support simple single-condition WHERE clauses. Compound expressions (AND/OR/NOT)
+go to **v0.2**.
+
+---
+
+### 7.6 `validate_ard()` — The Traceability Validator
+
+**Purpose.** Verify an ARD is consistent with the ARM-TS specification.
+
+**Signature**
+
+```r
+validate_ard(
+  re,              # ARS reporting event
+  ard,             # ARD data frame (from {cards})
+  analysis_id,     # NULL → validate all
+  adam_data = NULL # Optional: ADaM for re-computation check
+)
+```
+
+**Six checks** (you prototyped #2 and #5 in Chapter 5):
+
+1. **Coverage** — every Analysis in ARM-TS has rows in the ARD
+2. **Re-derivation** — applying the ARM-TS spec to ADaM reproduces stored `rawValue`
+3. **Population consistency** — `AnalysisSet` applied to ADaM matches the ARD denominator
+4. **Group completeness** — every expected `Group` combination appears in the ARD
+5. **Format consistency** — `formattedValue` matches `rawValue + resultPattern`
+6. **SAP page exists** — `documentRef.pageRefs` resolve to real pages (optional PDF check)
+
+**Returns** a two-part report: a `$summary` list of counts, and a `$details` data frame of
+per-check rows with `status` ∈ `{PASS, FAIL, WARN}` and a `message`.
+
+---
+
+### 7.7 `ars_summary()` — A Human-Readable Print Method
+
+A `print()` for `ars_reporting_event` objects. Useful for exploring an unfamiliar ARS file.
+
+```
+── ARS Reporting Event ────────────────────────────────────
+ID:      RE001
+Name:    Study XYZ-001 Final CSR
+Version: 1
+
+── Populations (AnalysisSets) ────────────────────────────
+  AS001  Intent-to-Treat Population    ADSL.ITTFL EQ 'Y'
+  AS002  Safety Population             ADSL.SAFFL EQ 'Y'
+  AS003  Per-Protocol Population       ADSL.PPSFL EQ 'Y' AND ADSL.COMPLFL EQ 'Y'
+
+── Methods ──────────────────────────────────────────────
+  M001   Summary Statistics - Continuous   6 operations
+  M002   Count and Percentage              3 operations
+
+── Analyses ─────────────────────────────────────────────
+  45 analyses defined
+  38 analyses have stored results (ARD)
+   7 analyses have no stored results
+```
+
+A small but high-impact function — it's how new users will **explore** an unfamiliar ARM-TS
+file before doing anything else.
+
+---
+
+### 7.8 Package Infrastructure
+
+**Dependencies**
+
+```
+Imports:
+  jsonlite      # JSON read/write
+  openxlsx2     # Excel read/write (modern replacement for openxlsx)
+  dplyr         # Data manipulation
+  glue          # String interpolation
+  cli           # Console output formatting
+  rlang         # Error handling
+
+Suggests:
+  cards         # ARD generation examples
+  cardx         # Extended ARD
+  haven         # SAS dataset reading in vignettes
+  testthat      # Testing
+  knitr         # Vignette building
+```
+
+**File structure**
+
+```
+arsbridge/
+├── R/
+│   ├── parse_ars.R
+│   ├── ars_to_shell.R
+│   ├── shell_to_ars.R
+│   ├── validate_ard.R
+│   ├── ars_summary.R
+│   ├── where_clause.R     # Internal helpers
+│   ├── schema_objects.R   # Internal R representations of ARS classes
+│   └── utils.R
+├── inst/
+│   ├── extdata/
+│   │   ├── ars_schema/    # ARS v1.0 JSON Schema
+│   │   └── templates/     # Shell Excel templates
+│   └── examples/
+│       └── cdisc_pilot/
+├── vignettes/
+│   ├── getting_started.Rmd
+│   ├── shell_to_ars_workflow.Rmd
+│   └── validating_ard.Rmd
+├── tests/testthat/
+└── data/                   # Small example ARS/ARD objects
+```
+
+---
+
+### 7.9 Build Sequence (v0.1)
+
+Recommended order, designed to **minimize rework**:
+
+1. **`schema_objects.R`** — R structures mirroring ARS classes
+2. **`parse_ars()`** — once you can parse, everything builds on it
+3. **`ars_summary()`** — quick win to verify parsing; useful for debugging
+4. **`where_clause.R` helpers** — needed by both shell functions and `validate_ard()`
+5. **`ars_to_shell()`** — tests your understanding of object navigation
+6. **`validate_ard()`** — Checks 1–4 only first; add re-computation last
+7. **`shell_to_ars()`** — the hardest function; build after the shell template is established
+8. **Vignette: CDISC pilot** — walk through `parse_ars → ars_summary → ars_to_shell →
+   validate_ard` on public CDISC pilot data
+
+---
+
+### 7.10 GitHub and LinkedIn Strategy
+
+**Repo:** `arsbridge`
+**Tagline:** *"R package for bidirectional translation between annotated TLF shells and CDISC
+ARS ARM-TS, with ARD traceability validation."*
+
+**Three-post LinkedIn launch series**
+
+1. **(at repo creation)** *"The clinical programming community spent 20 years annotating TLF
+   shells in Word files. CDISC ARS is the machine-readable version of exactly that. I'm
+   building the R package that bridges them."*
+2. **(when `parse_ars` + `ars_to_shell` work)** *"You can now take any ARS ARM-TS JSON file
+   and render it as a human-readable annotated Excel shell in 3 lines of R. Here's a demo
+   using the CDISC pilot study data."*
+3. **(when `validate_ard` works)** *"arsbridge v0.1 is on GitHub: parse ARM-TS, generate
+   annotated shells, validate ARD traceability. First open-source R tool that closes the
+   loop between analysis specification and results. Feedback welcome."*
+
+---
+
+## Hands-On: Prototype the Core Helpers
+
+---
+
+## Exercise 7.1 — Prototype `where_clause_to_text()` {data-progressive=FALSE}
+
+Build the core internal helper that turns a `WhereClauseCondition` into a human-readable
+filter string. This is what powers `ars_to_shell()` and `ars_summary()`.
+
+```{r ch7-ex1, exercise=TRUE, exercise.lines=18}
+where_clause_to_text <- function(condition) {
+  # Wrap each value in single quotes and comma-separate if more than one
+  val_str <- paste0("'", unlist(condition$value), "'", collapse = ", ")
+
+  # Glue together: DATASET.VARIABLE COMPARATOR 'value'
+  glue::glue(
+    "{condition$___}.{condition$___} ",   # dataset.variable
+    "{condition$___} ",                   # comparator
+    "{val_str}"
+  )
+}
+
+# Test on the Safety Population AnalysisSet
+safe_cond <- re_json$analysisSets[[2]]$condition
+as.character(where_clause_to_text(safe_cond))
+
+# Expected: "ADSL.SAFFL EQ 'Y'"
+```
+
+```{r ch7-ex1-hint-1}
+# The condition has four fields:
+#   dataset, variable, comparator, value
+# You want a string of the form: "ADSL.SAFFL EQ 'Y'"
+```
+
+```{r ch7-ex1-solution}
+where_clause_to_text <- function(condition) {
+  val_str <- paste0("'", unlist(condition$value), "'", collapse = ", ")
+  glue::glue(
+    "{condition$dataset}.{condition$variable} ",
+    "{condition$comparator} ",
+    "{val_str}"
+  )
+}
+safe_cond <- re_json$analysisSets[[2]]$condition
+as.character(where_clause_to_text(safe_cond))
+# "ADSL.SAFFL EQ 'Y'" — this single function powers both ars_to_shell()
+# AND the population display line in ars_summary().
+```
+
+```{r ch7-ex1-check}
+grade_result(
+  pass_if(~ as.character(.result) == "ADSL.SAFFL EQ 'Y'",
+          "Correct — this is the core of ars_to_shell(). It composes the population/data-filter text every time arsbridge needs to render a WhereClause."),
+  fail_if(~ TRUE,
+          "Use condition$dataset, condition$variable, and condition$comparator. The value list is wrapped with single quotes by paste0('\\''...).")
+)
+```
+
+---
+
+## Exercise 7.2 — Prototype `parse_ars()`: ID-Indexed Lookup {data-progressive=FALSE}
+
+The defining feature of `parse_ars()` is that every collection is **indexed by object ID** so
+that lookups like `re$analyses[["AN001"]]` are O(1). Build that indexing pattern.
+
+```{r ch7-ex2, exercise=TRUE, exercise.lines=20}
+# A small helper: take a list of ARS objects and return a named list keyed by $id
+index_by_id <- function(object_list) {
+  ids <- sapply(object_list, function(x) x$___)   # which field carries the ID?
+  setNames(object_list, ids)
+}
+
+# Apply it to the Analyses in re_json
+analyses_by_id <- index_by_id(re_json$___)         # which top-level field?
+
+# Now access AN001 directly by ID
+an001 <- analyses_by_id[["AN001"]]
+cat("Analysis name:    ", an001$name,          "\n")
+cat("Dataset.variable: ", an001$dataset, ".", an001$variable, "\n", sep = "")
+cat("Population ID:    ", an001$analysisSetId, "\n")
+```
+
+```{r ch7-ex2-hint-1}
+# Each ARS object has an $id field.
+# The top-level field on re_json holding the list of analyses is $analyses.
+```
+
+```{r ch7-ex2-solution}
+index_by_id <- function(object_list) {
+  ids <- sapply(object_list, function(x) x$id)
+  setNames(object_list, ids)
+}
+
+analyses_by_id <- index_by_id(re_json$analyses)
+an001 <- analyses_by_id[["AN001"]]
+cat("Analysis name:    ", an001$name,          "\n")
+cat("Dataset.variable: ", an001$dataset, ".", an001$variable, "\n", sep = "")
+cat("Population ID:    ", an001$analysisSetId, "\n")
+# parse_ars() runs index_by_id() over EVERY object collection:
+# analysisSets, dataSubsets, groupings, methods, analyses, outputs.
+# That single transformation is most of what parse_ars() does.
+```
+
+---
+
+## Exercise 7.3 — Prototype `ars_summary()`: Populations Section {data-progressive=FALSE}
+
+Build a small function that prints the **Populations** section of `ars_summary()` —
+one line per AnalysisSet showing `id`, `name`, and the filter text. Reuse
+`where_clause_to_text()`.
+
+```{r ch7-ex3, exercise=TRUE, exercise.lines=22}
+where_clause_to_text <- function(condition) {
+  val_str <- paste0("'", unlist(condition$value), "'", collapse = ", ")
+  glue::glue(
+    "{condition$dataset}.{condition$variable} ",
+    "{condition$comparator} ",
+    "{val_str}"
+  )
+}
+
+print_populations <- function(re) {
+  cat("── Populations (AnalysisSets) ───────────────────────────\n")
+  for (as in re$___) {                       # which top-level field?
+    filter_text <- where_clause_to_text(as$condition)
+    cat(sprintf("  %s  %-30s  %s\n", as$___, as$___, filter_text))
+  }
+}
+
+print_populations(re_json)
+```
+
+```{r ch7-ex3-hint-1}
+# Iterate over re$analysisSets
+# Each AnalysisSet has $id, $name, and $condition
+```
+
+```{r ch7-ex3-solution}
+where_clause_to_text <- function(condition) {
+  val_str <- paste0("'", unlist(condition$value), "'", collapse = ", ")
+  glue::glue(
+    "{condition$dataset}.{condition$variable} ",
+    "{condition$comparator} ",
+    "{val_str}"
+  )
+}
+
+print_populations <- function(re) {
+  cat("── Populations (AnalysisSets) ───────────────────────────\n")
+  for (as in re$analysisSets) {
+    filter_text <- where_clause_to_text(as$condition)
+    cat(sprintf("  %s  %-30s  %s\n", as$id, as$name, filter_text))
+  }
+}
+print_populations(re_json)
+# Two lines for AS001 (ITT) and AS002 (Safety) — populated entirely from
+# the ARM-TS, with no hard-coded knowledge of CDISCPILOT01.
+# ars_summary() composes 5 print_* functions like this one: populations,
+# data subsets, groupings, methods, analyses.
+```
+
+---
+
+## Exercise 7.4 — Sketch `validate_ard()` Check #1: Coverage {data-progressive=FALSE}
+
+Check #1 asks: **does every Analysis in the ARM-TS have at least one row in the ARD?** Write
+a small coverage check that returns a data frame of `analysis_id` + `status` + `message`.
+
+```{r ch7-ex4, exercise=TRUE, exercise.lines=22}
+# Simulate an ARD subset: in this sample re_json there's only AN001, with results.
+# Pretend the ARD covers only the analyses listed below.
+ard_analysis_ids <- c("AN001")             # what's actually in the ARD
+ars_analysis_ids <- sapply(re_json$analyses, function(a) a$id)
+
+coverage_check <- function(ars_ids, ard_ids) {
+  tibble(
+    analysis_id = ars_ids,
+    status      = ifelse(ars_ids %in% ___, "PASS", "FAIL"),   # what to compare against?
+    message     = ifelse(ars_ids %in% ard_ids,
+                         "ARD rows present",
+                         "No ARD rows found")
+  )
+}
+
+coverage_check(ars_analysis_ids, ard_analysis_ids)
+```
+
+```{r ch7-ex4-hint-1}
+# You're testing whether each ARM-TS analysis_id is found in the set of
+# analysis IDs that the ARD covers.
+```
+
+```{r ch7-ex4-solution}
+ard_analysis_ids <- c("AN001")
+ars_analysis_ids <- sapply(re_json$analyses, function(a) a$id)
+
+coverage_check <- function(ars_ids, ard_ids) {
+  tibble(
+    analysis_id = ars_ids,
+    status      = ifelse(ars_ids %in% ard_ids, "PASS", "FAIL"),
+    message     = ifelse(ars_ids %in% ard_ids,
+                         "ARD rows present",
+                         "No ARD rows found")
+  )
+}
+coverage_check(ars_analysis_ids, ard_analysis_ids)
+# In a real study with 45 ARM-TS analyses and 38 ARD-covered, you'd see
+# 7 FAIL rows — each one a specific analysis that was specified but never
+# computed. That's exactly the kind of gap a validator catches.
+```
+
+---
+
+## Exercise 7.5 — Capstone: Map Each Function to the Pipeline Step {data-progressive=FALSE}
+
+Build a small lookup that links each `arsbridge` function to the pipeline step it serves.
+This is the conceptual map you'll explain to anyone who asks *"what does arsbridge do?"*
+
+```{r ch7-ex5, exercise=TRUE, exercise.lines=15}
+arsbridge_map <- tribble(
+  ~function_name,    ~pipeline_step,                                    ~depends_on,
+  "parse_ars",       "Read ARM-TS JSON into R",                         "—",
+  "ars_summary",     "Human-readable exploration of an ARS object",     ___,         # depends on?
+  "ars_to_shell",    "Render ARM-TS as annotated Excel shell",          ___,
+  "shell_to_ars",    "Translate annotated Excel shell → ARM-TS JSON",   "where_clause helpers (text_to_where_clause)",
+  "validate_ard",    "Cross-check ARD against ARM-TS specification",    ___
+)
+
+arsbridge_map
+```
+
+```{r ch7-ex5-hint-1}
+# ars_summary, ars_to_shell, and validate_ard all consume an already-parsed
+# ReportingEvent. What function produces that?
+```
+
+```{r ch7-ex5-solution}
+arsbridge_map <- tribble(
+  ~function_name,    ~pipeline_step,                                    ~depends_on,
+  "parse_ars",       "Read ARM-TS JSON into R",                         "—",
+  "ars_summary",     "Human-readable exploration of an ARS object",     "parse_ars",
+  "ars_to_shell",    "Render ARM-TS as annotated Excel shell",          "parse_ars + where_clause_to_text",
+  "shell_to_ars",    "Translate annotated Excel shell → ARM-TS JSON",   "where_clause helpers (text_to_where_clause)",
+  "validate_ard",    "Cross-check ARD against ARM-TS specification",    "parse_ars + where_clause helpers"
+)
+arsbridge_map
+# Note: 4 of the 5 functions depend on parse_ars().
+# That's why parse_ars() is item #2 on the build sequence — right after
+# defining the R schema objects.
+```
+
+---
+
+## Chapter 7 Knowledge Check
+
+```{r ch7-quiz, echo=FALSE}
+quiz(
+  caption = "Chapter 7 — Check Your Understanding",
+
+  question(
+    "Which arsbridge function is the foundation that almost every other function depends on?",
+    answer("ars_to_shell()"),
+    answer("parse_ars()", correct = TRUE),
+    answer("validate_ard()"),
+    answer("shell_to_ars()"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Why does parse_ars() return ID-indexed lists rather than ordered arrays?",
+    answer(
+      "Because every ARS object is referenced by ID elsewhere — ID-indexed lists give O(1) lookups for analysisSetId, methodId, etc.",
+      correct = TRUE
+    ),
+    answer("Because the ARS schema requires it"),
+    answer("Because R cannot store ordered lists"),
+    answer("Because JSON is intrinsically unordered"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Which function is the INVERSE of ars_to_shell()?",
+    answer("validate_ard()"),
+    answer("shell_to_ars()", correct = TRUE),
+    answer("parse_ars()"),
+    answer("ars_summary()"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Which internal helper is reused by both ars_to_shell() and ars_summary()?",
+    answer("text_to_where_clause()"),
+    answer("where_clause_to_text()", correct = TRUE),
+    answer("index_by_id()"),
+    answer("coverage_check()"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Which validate_ard() check requires ADaM data as an input?",
+    answer("Check #1 (Coverage)"),
+    answer("Check #2 (Re-derivation from ADaM)", correct = TRUE),
+    answer("Check #4 (Group completeness)"),
+    answer("Check #5 (Format consistency)"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Why is shell_to_ars() built LAST in the recommended build sequence?",
+    answer(
+      "Because parsing free-form annotation text into structured WhereClauses is the hardest part, and the Excel shell template must be stable first",
+      correct = TRUE
+    ),
+    answer("Because it depends on validate_ard()"),
+    answer("Because it requires a paid CRAN account"),
+    answer("Because it has no test coverage"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Which two packages handle Excel and JSON read/write in arsbridge?",
+    answer("readxl + jsonify"),
+    answer("openxlsx2 + jsonlite", correct = TRUE),
+    answer("xlsx + RJSONIO"),
+    answer("haven + arrow"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "What is the v0.1 scope decision for compound WhereClause expressions (AND/OR/NOT) in shell_to_ars()?",
+    answer("Fully supported in v0.1"),
+    answer("Deferred to v0.2 — v0.1 supports simple single-condition WHERE only", correct = TRUE),
+    answer("Not planned for any version"),
+    answer("Implemented only for AND, never OR or NOT"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  )
+)
+```
+
+---
+
+## Tutorial Completion {.congratulations}
+
+You've completed the **ARS Interactive Training**.
+
+### What you now know
+
+- **Why ARS exists** and the five chronic problems it addresses (Chapter 1)
+- The complete **ARS object hierarchy** — ReportingEvent down to OperationResult (Chapter 2)
+- **Every major ARM-TS object** with field-by-field annotated-shell mappings (Chapter 3)
+- How to **generate ARDs** with `{cards}` and `{cardx}` on real pharmaverse data, and the
+  flat-ARD ↔ formal-model mapping (Chapter 4)
+- The **end-to-end traceability chain** SAP → ARM-TS → ADaM → R → ARD → display, plus how to
+  detect a population traceability break and a format-consistency break (Chapter 5)
+- Exactly **where the open-source ecosystem stops** — `{cards}`, `{cardx}`, `{gtsummary}`,
+  `{datasetjson}` cover their layers, but the ARM-TS layer is uncovered (Chapter 6)
+- A complete **v0.1 design for `arsbridge`** — five functions, internal helpers, build
+  sequence, package infrastructure, and launch plan (Chapter 7)
+
+### Next steps
+
+1. **Build `arsbridge`.** Start with `parse_ars()` — everything else builds on it. Follow the
+   build sequence in Section 7.9.
+2. **Validate against the CDISC Pilot study.** The CDISC sdtm-adam-pilot-project on GitHub
+   has public ADaM data. Build the vignette `getting_started.Rmd` against it.
+3. **Publish.** Use the three-post LinkedIn series in Section 7.10 to tie each milestone to a
+   public announcement.
+
+### Key resources
+
+- [ARS v1.0 Specification](https://cdisc-org.github.io/analysis-results-standard/)
+- [ARS GitHub (model YAML, examples)](https://github.com/cdisc-org/analysis-results-standard)
+- [CDISC Pilot Study data](https://github.com/cdisc-org/sdtm-adam-pilot-project)
+- [cards](https://insightsengineering.github.io/cards/) ·
+  [cardx](https://insightsengineering.github.io/cardx/) ·
+  [gtsummary](https://www.danieldsjoberg.com/gtsummary/) ·
+  [datasetjson](https://atorus-research.github.io/datasetjson/)
+- [pharmaverse](https://pharmaverse.org)
+
+You have everything you need. Go build it.

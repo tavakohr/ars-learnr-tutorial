@@ -1,0 +1,141 @@
+/* =============================================================
+   ARS Interactive Training — Custom Theme
+   White background, light-green text accents (flatly-style)
+   ============================================================= */
+
+:root {
+  --ars-green:        #22c55e;   /* light green text */
+  --ars-green-soft:   #4ade80;   /* hover / accent */
+  --ars-green-dark:   #16a34a;   /* active / strong */
+  --ars-ink:          #2c3e50;   /* body text */
+  --ars-muted:        #7f8c8d;
+  --ars-border:       #ecf0f1;
+  --ars-bg:           #ffffff;
+}
+
+/* ---------- Global ---------- */
+body,
+.topics,
+.topic,
+.bandContent,
+.band {
+  background: var(--ars-bg);
+  color: var(--ars-ink);
+  font-family: "Lato", "Segoe UI", -apple-system, BlinkMacSystemFont,
+               "Helvetica Neue", Arial, sans-serif;
+}
+
+/* ---------- Left Navigation Bar ---------- */
+
+.topicsContainer,
+.topicsList,
+.topics {
+  background: var(--ars-bg);
+  border-right: 1px solid var(--ars-border);
+}
+
+.topicsList {
+  padding: 14px 8px;
+}
+
+/* Individual topic items — white bg, light green text */
+.topicsList .topic {
+  display: block;
+  margin: 4px 4px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  color: var(--ars-green) !important;
+  background: var(--ars-bg);
+  font-weight: 500;
+  font-size: 0.95rem;
+  text-decoration: none;
+  border-left: 3px solid transparent;
+  transition: background-color 0.15s ease, color 0.15s ease,
+              border-left-color 0.15s ease;
+}
+
+.topicsList .topic:hover {
+  background: #f8fdf9;
+  color: var(--ars-green-soft) !important;
+  border-left-color: var(--ars-green-soft);
+  cursor: pointer;
+}
+
+/* Active / current topic */
+.topicsList .topic.current,
+.topicsList .topic.active {
+  background: #f0fdf4;
+  color: var(--ars-green-dark) !important;
+  font-weight: 600;
+  border-left-color: var(--ars-green-dark);
+}
+
+/* Completed topic checkmark */
+.topicsList .topic.done::before {
+  content: "✓ ";
+  color: var(--ars-green);
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+/* Header at the top of the sidebar */
+.bandContent .topicsHeader,
+.topicsHeader {
+  background: var(--ars-bg);
+  color: var(--ars-green-dark);
+  padding: 16px 18px;
+  font-weight: 700;
+  font-size: 1rem;
+  border-bottom: 1px solid var(--ars-border);
+}
+
+/* Progress bar */
+.progressBar,
+.progress {
+  background: var(--ars-border);
+  border-radius: 999px;
+  overflow: hidden;
+  height: 5px;
+}
+.progressBar .progressBarFill,
+.progress .progress-bar {
+  background: var(--ars-green);
+}
+
+/* ---------- Main content area (kept simple/flatly-like) ---------- */
+
+.section,
+.section.level2,
+.section.level3 {
+  background: var(--ars-bg);
+}
+
+h1, h2, h3, h4 {
+  color: var(--ars-ink);
+  font-weight: 600;
+}
+
+a {
+  color: var(--ars-green-dark);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--ars-green-soft);
+  text-decoration: underline;
+}
+
+/* ---------- Sidebar scrollbar ---------- */
+.topicsContainer::-webkit-scrollbar,
+.topicsList::-webkit-scrollbar {
+  width: 6px;
+}
+.topicsContainer::-webkit-scrollbar-track,
+.topicsList::-webkit-scrollbar-track {
+  background: transparent;
+}
+.topicsContainer::-webkit-scrollbar-thumb,
+.topicsList::-webkit-scrollbar-thumb {
+  background: var(--ars-green-soft);
+  border-radius: 999px;
+  opacity: 0.5;
+}

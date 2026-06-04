@@ -1,0 +1,457 @@
+---
+title: "CDISC Analysis Results Standard (ARS) — Interactive Training"
+subtitle: "Chapter 1: Why ARS Exists"
+author: "Hamid Tavakoli, MD, MSc"
+output:
+  learnr::tutorial:
+    progressive: true
+    allow_skip: true
+    css: www/custom.css
+runtime: shiny_prerendered
+description: >
+  A hands-on tutorial covering CDISC ARS v1.0 using real pharmaverse datasets.
+  Chapter 1 covers the five chronic failures ARS was built to solve, the historical
+  context, and how ARM-TS maps field-by-field to the annotated shell you already write.
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(gradethis)
+library(pharmaverseadam)
+library(pharmaversesdtm)
+library(dplyr)
+library(cards)
+library(jsonlite)
+library(glue)
+
+# learnr global options
+tutorial_options(
+  exercise.timelimit = 60
+)
+
+# gradethis setup
+gradethis_setup()
+
+# Load pharmaverse ADaM datasets
+data("adsl",  package = "pharmaverseadam")
+data("adae",  package = "pharmaverseadam")
+data("adtte", package = "pharmaverseadam")
+data("adlb",  package = "pharmaverseadam")
+
+# Pre-filter datasets used throughout the tutorial
+# Note: pharmaverseadam adsl only has SAFFL; use ARM != "" as a proxy for randomised/ITT
+adsl_safe <- adsl %>% filter(SAFFL == "Y")
+adsl_itt  <- adsl %>% filter(!is.na(ARM) & ARM != "")   # randomised subjects
+adae_teae <- adae %>% filter(TRTEMFL == "Y")
+
+# Load sample ARM-TS JSON
+re_json <- jsonlite::read_json("data/reporting_event.json")
+```
+
+---
+
+## Chapter 1: Why ARS Exists
+
+### 1.1 The Problem ARS Was Built to Solve
+
+Every clinical trial generates hundreds of Tables, Figures, and Listings (TFLs). Each TFL is
+produced by a programmer, reviewed by a statistician, checked by an independent programmer,
+and eventually packaged into a Clinical Study Report (CSR) for submission to the FDA or EMA.
+
+This process has worked for decades. It has also been broken in the same ways for decades.
+
+### The Five Chronic Failures
+
+**1. Static, unnavigable outputs**
+
+TFLs are delivered as RTF or PDF files. A single submission may contain 300–800 tables. They
+cannot be searched programmatically. A regulator who wants to understand how Table 14.2.1 was
+derived must read the SAP narrative, find the relevant section, interpret the English text, and
+mentally connect it to the code. Every step is manual.
+
+**2. Results that are expensive to generate and impossible to reuse**
+
+A TFL produced for one study cannot be reused for another study, even if the analysis is
+identical. The numbers live in a formatted cell in an RTF file. There is no structured
+representation of the result itself — only its formatted display.
+
+**3. No machine-readable link between intent and execution**
+
+The SAP describes the analysis in English. The programmer interprets that English and writes
+code. The code produces results. The results are formatted into a table. At no point in this
+chain does a machine verify that the execution matches the intent. The only check is a human
+reviewer comparing the code to the SAP — a slow, error-prone, and expensive process.
+
+**4. Unnecessary variation between sponsors**
+
+Every sponsor, every CRO, every programming team develops their own annotation conventions,
+shell formats, and metadata structures. There is no standard for what a "primary efficacy
+analysis" looks like as a data artifact. Two submissions covering the same endpoint will be
+structured completely differently.
+
+**5. Limited regulatory use cases**
+
+Regulators receive the same PDF tables as everyone else. They cannot ask: "Show me every
+analysis using the ITT population." They cannot re-run an analysis to verify a result. They
+cannot compare across studies. All of this is theoretically possible from the underlying data
+but practically impossible from the delivered outputs.
+
+---
+
+### 1.2 The Historical Attempts
+
+It is worth understanding that ARS is not the first attempt to solve this problem.
+
+**ARM v1.0 (Analysis Results Metadata, circa 2012–2018)**
+
+ARM described metadata about analysis displays and results at a high level — essentially, it
+told you what analyses existed and what displays they appeared in. It did not define a formal
+results data structure. It was adopted unevenly and never gained regulatory traction.
+
+**Define-XML 2.x**
+
+Define-XML provides metadata about datasets and variables. It is submission-required and
+well-understood. But it describes the *input* data structure, not the analysis results. You can
+read a Define-XML and understand what ADTTE contains, but you cannot learn what the KM estimate
+for the primary endpoint was.
+
+**The Gap ARM Left**
+
+ARM told you "Analysis A0001 appears in Table 14.2.1." It did not tell you: what dataset, what
+variable, what population filter, what statistical method, or what the result was. The formal
+model for encoding all of that — machine-readably — did not exist until ARS.
+
+---
+
+### 1.3 The ARS Solution
+
+CDISC formally launched the Analysis Results Standard (ARS) project in 2021. Version 1.0 was
+released in April 2024.
+
+ARS solves the problem with a two-layer model:
+
+**Layer 1 — Analysis Results Metadata Technical Specification (ARM-TS)**
+
+A machine-readable specification of *what was planned* and *how analyses were performed*. It encodes:
+
+- Which analyses exist
+- What datasets and variables they operate on
+- What populations and data subsets they use
+- What statistical methods they apply
+- How results appear in displays
+- Links back to the SAP
+
+This is the formal replacement for the annotated shell. It encodes exactly what a lead
+programmer writes in annotations — but in JSON, not English.
+
+**Layer 2 — Analysis Results Dataset (ARD)**
+
+A structured data format for storing the actual computed results. Each row in an ARD represents
+one result value from one analysis — the KM estimate, the p-value, the mean, the hazard ratio —
+with full context: which analysis, which population, which group, which operation.
+
+Together, these two layers create a machine-navigable chain: **what was planned → what was
+computed → what was displayed.**
+
+---
+
+### 1.4 The Regulatory Motivation
+
+The FDA is actively pushing adoption. Three concrete signals:
+
+**1. R Consortium Pilot 4 (fall 2025)**
+
+The R Consortium Submissions Working Group successfully submitted ADaM datasets in Dataset-JSON
+format to the FDA, demonstrating that the new JSON-based exchange format is viable for
+regulatory submissions.
+
+**2. FDA Request for Public Comment (April 2025)**
+
+The FDA published a Federal Register notice requesting public comment on CDISC Dataset-JSON v1.1
+as a replacement for SAS XPT as the standard exchange format. This is a direct signal that the
+entire CDISC data exchange infrastructure — including ARS — is moving toward regulatory mandate.
+
+**3. CDISC 360i (February 2025)**
+
+CDISC launched the 360i initiative with the stated goal of "standards-driven automation from
+study design through results." ARS is the results layer of that chain.
+
+---
+
+### 1.5 Where the Annotated Shell Fits
+
+This is the most important conceptual bridge for you as a practitioner.
+
+In your current workflow at a CRO:
+
+1. A programmer lead receives the SAP and TLF shells
+2. They open each shell and add annotations — e.g. *"AVAL from ADTTE where PARAMCD='OS' and MITTFL='Y', KM estimate at Week 24 per Section 9.2.3 of SAP"*
+3. This annotated shell is reviewed, signed off, and becomes the traceability document for the study
+4. The programmer uses this annotation to write code
+5. The QC programmer uses this annotation to independently verify the output
+
+The annotated shell is your company's proprietary format for encoding ARM-TS-equivalent
+information. Every CRO has a version of it. None of them are interoperable. None of them are
+machine-readable.
+
+**ARS ARM-TS is the standardized, machine-readable version of your annotated shell.**
+
+| Annotated Shell (Manual) | ARM-TS (Machine-Readable) |
+|:-------------------------|:--------------------------|
+| Table number and title | `Output.id`, `OutputDisplay.displayTitle` |
+| "AVAL from ADTTE" | `Analysis.dataset = 'ADTTE'`, `Analysis.variable = 'AVAL'` |
+| "where MITTFL='Y'" | `AnalysisSet` with `WhereClauseCondition: ADTTE.MITTFL EQ 'Y'` |
+| "KM estimate" | `AnalysisMethod` with `Operation: KM estimate` |
+| "per Section 9.2.3 of SAP" | `Analysis.documentRefs` pointing to the SAP document |
+| Lead programmer's sign-off | `ReportingEvent` with version and name |
+
+The logic is identical. The representation is different. Your existing knowledge of annotated
+shells is directly transferable to ARM-TS — you just need to learn the formal object model
+(Chapter 3).
+
+---
+
+### 1.6 What ARS Does NOT Cover
+
+- ARS does not replace SDTM or ADaM. It operates on top of them.
+- ARS does not specify *how* to perform statistical analyses. It specifies how to describe and record them.
+- ARS does not replace the SAP. It encodes the analysis specification from the SAP in machine-readable form.
+- ARS does not validate the statistical methods themselves.
+- ARS does not currently cover all analysis types. Complex methods (mixed models, Bayesian analyses) require sponsor-defined extensions.
+
+---
+
+### 1.7 The Adoption Gap
+
+Despite the clear need and regulatory momentum, ARS adoption as of 2026 remains low in industry:
+
+1. The standard is new — v1.0 only released April 2024
+2. The tooling is incomplete — generation tools exist (`{cards}`), exchange tools exist (`{datasetjson}`), but the traceability/validation layer is missing
+3. Most programmers have never seen an ARM-TS file
+4. Training resources are sparse
+
+This is the gap you intend to fill — through building the `arsbridge` package and becoming one
+of the few practitioners with deep working knowledge of the standard.
+
+---
+
+## Hands-On: The Data We Work With
+
+### A Look at the Real Data
+
+The exercises below use the same pharmaverse datasets used in CDISC pilot submissions. Let's
+orient ourselves before we start.
+
+```{r ch1-preview, exercise=FALSE, echo=TRUE}
+# Real pharmaverse ADaM data — used in CDISC pilot submissions
+# adsl: one row per subject (Subject-Level Analysis Dataset)
+dplyr::glimpse(adsl)
+```
+
+### How many subjects are in each population?
+
+```{r ch1-populations, exercise=FALSE, echo=TRUE}
+# The two key analysis populations
+cat("ITT Population (ITTFL='Y'):", nrow(adsl_itt), "subjects\n")
+cat("Safety Population (SAFFL='Y'):", nrow(adsl_safe), "subjects\n")
+```
+
+---
+
+## Exercise 1.1 — Explore the Scale of the Problem {data-progressive=FALSE}
+
+The annotated shell problem becomes clear when you see how many distinct results a single
+dataset implies. Let's count.
+
+```{r ch1-ex1, exercise=TRUE, exercise.lines=8}
+# How many distinct treatment arms are in the Safety Population?
+# This tells you the minimum number of result columns any by-arm table must have.
+# Use distinct() on TRT01A from adsl_safe
+
+adsl_safe %>%
+  ___(TRT01A)    # fill in: distinct
+```
+
+```{r ch1-ex1-hint-1}
+# Use distinct() to get unique values of TRT01A
+adsl_safe %>% distinct(TRT01A)
+```
+
+```{r ch1-ex1-solution}
+adsl_safe %>% distinct(TRT01A)
+# 3 treatment arms: Xanomeline High Dose, Xanomeline Low Dose, Placebo
+# Each requires separate results — ARM-TS must formally define each group
+```
+
+```{r ch1-ex1-check}
+grade_result(
+  pass_if(~ nrow(.result) == 3,
+          "Correct — 3 treatment arms. Each needs its own result row in the ARD, and each group must be formally defined in the ARM-TS AnalysisGrouping."),
+  fail_if(~ TRUE,
+          "Try: adsl_safe %>% distinct(TRT01A)")
+)
+```
+
+---
+
+## Exercise 1.2 — Count the Implied Analyses {data-progressive=FALSE}
+
+A single demographics table (Table 14.1.1) with 10 rows × 3 treatment arms implies at least
+30 individual result values. How many TEAEs are there across treatment arms — giving you a sense
+of the scale of results in a typical AE table?
+
+```{r ch1-ex2, exercise=TRUE, exercise.lines=10}
+# Count the number of subjects with at least one TEAE, by treatment arm
+# adae_teae already contains only treatment-emergent AEs (TRTEMFL='Y')
+# Hint: count unique subjects per arm
+
+adae_teae %>%
+  ___(USUBJID, TRT01A) %>%      # keep one row per subject per arm
+  ___(TRT01A) %>%                # count by arm
+  ___(n_subjects = n())          # name the count column
+```
+
+```{r ch1-ex2-hint-1}
+# Step 1: distinct(USUBJID, TRT01A) to deduplicate
+# Step 2: group_by(TRT01A)
+# Step 3: summarise(n_subjects = n())
+```
+
+```{r ch1-ex2-solution}
+adae_teae %>%
+  distinct(USUBJID, TRT01A) %>%
+  group_by(TRT01A) %>%
+  summarise(n_subjects = n())
+# Each of these counts is one result value in an ARD —
+# one operationId, one groupId, one rawValue
+```
+
+---
+
+## Exercise 1.3 — The ARM-TS in Your Hands {data-progressive=FALSE}
+
+The sample ARM-TS JSON (`reporting_event.json`) is already loaded as `re_json`. This is a
+minimal but complete ReportingEvent — the root object of the ARS model.
+
+Explore its top-level structure and find the name of this reporting event.
+
+```{r ch1-ex3, exercise=TRUE, exercise.lines=8}
+# re_json is an R list parsed from the ARM-TS JSON
+# Print the name of this reporting event
+# Hint: it's a top-level field called "name"
+
+re_json$___
+```
+
+```{r ch1-ex3-hint-1}
+# Access a named element of a list with $
+# re_json$name
+```
+
+```{r ch1-ex3-solution}
+re_json$name
+# "CDISC Pilot Study CSR"
+# This is the root object — everything else (analyses, methods, populations)
+# hangs off this ReportingEvent
+```
+
+```{r ch1-ex3-check}
+grade_result(
+  pass_if(~ .result == "CDISC Pilot Study CSR",
+          "Correct — you're reading a real ARM-TS object. Everything in Chapters 2–5 builds on this structure."),
+  fail_if(~ TRUE,
+          "Try: re_json$name")
+)
+```
+
+---
+
+## Chapter 1 Knowledge Check
+
+```{r ch1-quiz, echo=FALSE}
+quiz(
+  caption = "Chapter 1 — Check Your Understanding",
+
+  question(
+    "What is the primary problem that ARS solves?",
+    answer("SAS datasets are too large for FDA submissions"),
+    answer(
+      "Clinical trial results are static, non-reusable, and have no machine-readable link between analysis intent and execution",
+      correct = TRUE
+    ),
+    answer("R cannot produce regulatory-grade tables without SAS"),
+    answer("ADaM datasets are not standardized across sponsors"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "In your CRO annotated shell workflow, what ARS component does the shell annotation most directly correspond to?",
+    answer("The ARD (Analysis Results Dataset)"),
+    answer(
+      "The ARM-TS (Analysis Results Metadata Technical Specification)",
+      correct = TRUE
+    ),
+    answer("The Dataset-JSON exchange format"),
+    answer("The SDTM domain"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "Which of the following is NOT covered by ARS?",
+    answer("Encoding which dataset and variable an analysis uses"),
+    answer("Linking an analysis to the SAP section that specifies it"),
+    answer(
+      "Specifying how to perform a mixed-model repeated-measures (MMRM) analysis",
+      correct = TRUE
+    ),
+    answer("Recording the population filter used for an analysis"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "What is the key difference between the ARD and the ARM-TS?",
+    answer(
+      "ARM-TS is the machine-readable specification of what was planned; ARD stores the actual computed result values",
+      correct = TRUE
+    ),
+    answer("ARD is used for SDTM data; ARM-TS is used for ADaM data"),
+    answer("ARM-TS is for continuous analyses; ARD is for categorical analyses"),
+    answer("They are two names for the same object"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  ),
+
+  question(
+    "According to the chapter, why is ARS adoption still low in industry as of 2026?",
+    answer("The FDA has not expressed interest in ARS"),
+    answer("ARS only covers SDTM, not ADaM"),
+    answer(
+      "The standard is new (v1.0 released April 2024), tooling is incomplete, and training resources are sparse",
+      correct = TRUE
+    ),
+    answer("SAS cannot generate ARM-TS JSON"),
+    allow_retry = TRUE,
+    random_answer_order = TRUE
+  )
+)
+```
+
+---
+
+## Chapter 1 Summary {.congratulations}
+
+You now understand:
+
+- The **five chronic failures** ARS was built to address: static outputs, non-reusable results,
+  no machine-readable intent-to-execution link, sponsor variation, and limited regulatory utility
+- The **two-layer ARS model**: ARM-TS (specification) + ARD (results)
+- Why ARM v1.0 and Define-XML fell short of solving the problem
+- How **ARM-TS is the machine-readable version of your annotated shell** — the mapping is direct and field-by-field
+- The regulatory signals driving adoption (R Consortium Pilot 4, FDA RFI, CDISC 360i)
+- Where the `arsbridge` gap sits: the traceability/validation layer is missing from the open-source ecosystem
+
+**Next:** Chapter 2 — The ARS Data Model (the complete object hierarchy: ReportingEvent → Analysis → OperationResult)
+
