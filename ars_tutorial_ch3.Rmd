@@ -31,11 +31,18 @@ gradethis_setup()
 # Load pharmaverse ADaM datasets
 data("adsl",  package = "pharmaverseadam")
 data("adae",  package = "pharmaverseadam")
-# pharmaverseadam 1.4+ replaced "adtte" with TA-specific datasets; use the
-# oncology one and join subject-level vars in from ADSL
+# pharmaverseadam 1.4+ replaced the generic "adtte" with TA-specific
+# datasets; use the oncology one and join subject-level vars in from
+# ADSL. pharmaverseadam ADSL lacks ITTFL, so derive it from ARM (a
+# subject is "randomised / ITT" iff ARM is non-empty).
 data("adtte_onco", package = "pharmaverseadam")
 adtte <- adtte_onco %>%
-  left_join(adsl %>% select(USUBJID, TRT01A, ITTFL), by = "USUBJID")
+  left_join(
+    adsl %>%
+      mutate(ITTFL = ifelse(!is.na(ARM) & ARM != "", "Y", "N")) %>%
+      select(USUBJID, TRT01A, ITTFL),
+    by = "USUBJID"
+  )
 data("adlb",  package = "pharmaverseadam")
 
 adsl_safe <- adsl %>% filter(SAFFL == "Y")
