@@ -428,7 +428,7 @@ repository (planned).
 ## Author
 
 **Hamid Tavakoli, MD, MSc**
-Physician, Data Scientist, Senior Clinical Statistical Programmer
+Physician, Data Scientist, Principal Clinical Statistical Programmer
 GitHub: [@tavakohr](https://github.com/tavakohr)
 
 ---
