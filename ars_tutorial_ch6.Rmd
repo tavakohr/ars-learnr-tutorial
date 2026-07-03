@@ -1,5 +1,5 @@
 ---
-title: "CDISC Analysis Results Standard (ARS) — Interactive Training"
+title: "CDISC Analysis Results Standard (ARS): Interactive Training"
 subtitle: "Chapter 6: R Ecosystem and Tools"
 author: "Hamid Tavakoli, MD, MSc"
 output:
@@ -11,10 +11,10 @@ runtime: shiny_prerendered
 description: >
   Chapter 6 maps the open-source R ecosystem to the ARS pipeline: {cards} and
   {cardx} cover the ARD layer; {gtsummary} and {rtables} cover the display
-  layer; {datasetjson} covers dataset exchange — but ARM-TS parsing,
-  generation, and validation are entirely uncovered. You will build a full
-  demographics table from ARD → gtsummary on real pharmaverse data and
-  enumerate what the ecosystem still lacks.
+  layer; {datasetjson} covers dataset exchange. ARM-TS parsing, generation,
+  and validation are entirely uncovered. You will build a full demographics
+  table from ARD to gtsummary on real pharmaverse data and enumerate what the
+  ecosystem still lacks.
 ---
 
 ```{r setup, include=FALSE}
@@ -66,25 +66,26 @@ re_json <- jsonlite::read_json("data/reporting_event.json")
 
 ### 6.1 The Coverage Picture
 
-The R ecosystem for ARS covers **three parts of the pipeline well** and **one part poorly**.
-Understanding exactly what each tool does — and where it stops — is essential before
-designing `arsbridge`.
+The R ecosystem for ARS covers **three parts of the pipeline well** and **one part
+poorly**. Understanding exactly what each tool does, and where it stops, is essential
+before designing `arsbridge`. This chapter is a tour of the tools with your hands on each
+one.
 
 ```
-SAP ──→ ARM-TS ──→ ADaM ──→ ARD ──→ Display
-          ↑                  ↑          ↑
+SAP --> ARM-TS --> ADaM --> ARD --> Display
+          ^                  ^          ^
      [NOT COVERED]     [{cards}]   [{gtsummary}]
      [arsbridge]       [{cardx}]   [{rtables}]
-          ↑                           ↑
+          ^                           ^
      [NOT COVERED]            [{datasetjson}]
      [arsbridge]               (exchange format)
 ```
 
-The diagonal arrows from `[NOT COVERED]` show where `arsbridge` will sit.
+The `[NOT COVERED]` slots show where `arsbridge` will sit.
 
 ---
 
-### 6.2 `{cards}` — CDISC Analysis Results Data
+### 6.2 `{cards}`: CDISC Analysis Results Data
 
 **Repository:** github.com/insightsengineering/cards
 **Maintainers:** Roche, GSK, Novartis (Insights Engineering)
@@ -103,19 +104,28 @@ The diagonal arrows from `[NOT COVERED]` show where `arsbridge` will sit.
 | `ard_stack()` | Combine multiple ARDs | Build a full table's ARD |
 | `ard_fmt_args()` | Set formatting arguments | Apply display formats |
 
+Two of these need a word more, because the exercises use them:
+
+- `ard_categorical()` has the same calling pattern as `ard_continuous()` (`data`, `by`,
+  `variables`), but instead of one row per statistic it produces rows per *level* of the
+  variable (n, N, and p for each level of SEX, for example).
+- `ard_stack()` takes several `ard_*()` results and unions them into one tall data frame.
+  A real demographics table mixes continuous rows (AGE) and categorical rows (SEX, RACE),
+  so stacking is how you assemble the full table's ARD.
+
 **What `{cards}` does NOT do**
 
 - It does **not** read or parse ARM-TS JSON
-- It does **not** know about AnalysisSets — you apply population filters manually before
+- It does **not** know about AnalysisSets; you apply population filters manually before
   calling it
-- It does **not** know about `GroupingFactor` definitions — you pass the grouping variable
+- It does **not** know about `GroupingFactor` definitions; you pass the grouping variable
   directly as `by =`
 - It does **not** link the ARD back to the analysis specification
 - It does **not** produce ARM-TS from annotated shells
 
 ---
 
-### 6.3 `{cardx}` — Extended ARD Utilities
+### 6.3 `{cardx}`: Extended ARD Utilities
 
 **Repository:** github.com/insightsengineering/cardx
 **Purpose:** complex statistical analyses for ARD generation
@@ -132,18 +142,22 @@ The diagonal arrows from `[NOT COVERED]` show where `arsbridge` will sit.
 | `ard_stats_fisher_test()` | Fisher's exact test |
 | `ard_cmh_test()` | Cochran-Mantel-Haenszel (stratified) |
 
-Like `{cards}`, it reads neither ARM-TS nor any analysis specification — you still apply
+Like `{cards}`, it reads neither ARM-TS nor any analysis specification. You still apply
 population and data-subset filters manually.
 
 ---
 
-### 6.4 `{gtsummary}` — Tables from ARDs
+### 6.4 `{gtsummary}`: Tables from ARDs
 
 **Repository:** github.com/ddsjoberg/gtsummary
 **Purpose:** render clinical-trial tables from ARD data frames
 
-In recent versions (3.x), `{gtsummary}` has been refactored to use ARD as its core data
-structure. The pattern is `ard_stack(...) %>% tbl_ard_summary(...)`.
+In recent versions (3.x), `{gtsummary}` has been refactored to use the ARD as its core
+data structure. The pattern you will use in Exercise 6.2:
+
+1. Build a stacked ARD with `ard_stack()`
+2. Hand it to `tbl_ard_summary(cards = ..., by = ..., variables = ...)`
+3. Optionally add a caption with `modify_caption()`
 
 **What `{gtsummary}` does NOT do**
 
@@ -153,26 +167,27 @@ structure. The pattern is `ard_stack(...) %>% tbl_ard_summary(...)`.
 
 ---
 
-### 6.5 `{datasetjson}` — CDISC Dataset-JSON Exchange Format
+### 6.5 `{datasetjson}`: CDISC Dataset-JSON Exchange Format
 
 **Repository:** github.com/atorus-research/datasetjson
 **On CRAN:** yes (v0.3.0)
 **Purpose:** read/write CDISC Dataset-JSON for regulatory submission
 
-Dataset-JSON is the new exchange format the FDA is evaluating as a **replacement for SAS XPT**.
-It serializes SDTM/ADaM datasets as JSON with CDISC-compliant metadata. The R Consortium
-used it for the **FDA Pilot 4 submission (fall 2025)**.
+Dataset-JSON is the new exchange format the FDA is evaluating as a **replacement for SAS
+XPT**. It serializes SDTM/ADaM datasets as JSON with CDISC-compliant metadata. The R
+Consortium used it for the **FDA Pilot 4 submission (fall 2025)**.
 
 **Relevance to ARS.** Dataset-JSON handles the **dataset exchange layer**. ARM-TS is a
-separate JSON structure that lives **alongside** Dataset-JSON — ARM-TS encodes the *analysis
-specification*, Dataset-JSON encodes the *datasets*.
+separate JSON structure that lives **alongside** Dataset-JSON: ARM-TS encodes the
+*analysis specification*, Dataset-JSON encodes the *datasets*. Do not confuse the two;
+they solve different problems and travel together in a submission.
 
 ---
 
 ### 6.6 The ARM-TS Parser Gap
 
-**None** of the above tools read or write ARM-TS JSON. There is no R function in the open
-source ecosystem that does any of the following:
+Here is the punchline of the chapter. **None** of the above tools read or write ARM-TS
+JSON. There is no R function in the open-source ecosystem that does any of the following:
 
 - Parse an ARM-TS JSON file into an R list/object
 - Extract `AnalysisSet` conditions and apply them as dplyr filters
@@ -183,17 +198,17 @@ source ecosystem that does any of the following:
 The CDISC model YAML (`ars_ldm.yaml`) defines the schema. But no R package implements:
 
 ```r
-parse_ars("reporting_event.json")        # → R list of ARS objects
-ars_to_shell(re, output_id = "OUT001")   # → Excel annotated shell
-shell_to_ars("annotated_shell.xlsx")     # → ARM-TS JSON
-validate_ard(re, ard)                    # → traceability report
+parse_ars("reporting_event.json")        # -> R list of ARS objects
+ars_to_shell(re, output_id = "OUT001")   # -> Excel annotated shell
+shell_to_ars("annotated_shell.xlsx")     # -> ARM-TS JSON
+validate_ard(re, ard)                    # -> traceability report
 ```
 
 This is what `arsbridge` builds. Chapter 7 covers the design in detail.
 
 ---
 
-### 6.7 `siera` (Clymb Clinical) — Closed-Source Comparison
+### 6.7 `siera` (Clymb Clinical): the Closed-Source Comparison
 
 For completeness: `siera` is a commercial R package from **Clymb Clinical** that:
 
@@ -201,10 +216,10 @@ For completeness: `siera` is a commercial R package from **Clymb Clinical** that
 - Claims traceability linking
 - Integrates with their eTFL portal
 
-It is proprietary, not on CRAN, and requires a commercial license. It is the closest thing
-to what `arsbridge` would do — but it is **not open source**, not pharmaverse-aligned, and is
-developed by the same team (Bhavin Busa) who leads the ARS standard. The open-source
-community version of this capability does not exist.
+It is proprietary, not on CRAN, and requires a commercial license. It is the closest
+existing thing to what `arsbridge` would do, but it is **not open source**, not
+pharmaverse-aligned, and is developed by the same team (Bhavin Busa) that leads the ARS
+standard. The open-source community version of this capability simply does not exist.
 
 ---
 
@@ -212,31 +227,79 @@ community version of this capability does not exist.
 
 | Capability | Tool | Coverage |
 |------------|------|----------|
-| Generate ARD from ADaM | `{cards}` + `{cardx}` | ✅ Good |
-| Render tables from ARD | `{gtsummary}`, `{rtables}` | ✅ Good |
-| Exchange datasets as JSON | `{datasetjson}` | ✅ Good |
-| Parse ARM-TS JSON into R | — | ❌ Missing |
-| Generate ARM-TS from annotated shell | — | ❌ Missing |
-| Render ARM-TS as annotated shell | — | ❌ Missing |
-| Validate ARD against ARM-TS | — | ❌ Missing |
-| Apply AnalysisSet from ARM-TS to data | — | ❌ Missing |
+| Generate ARD from ADaM | `{cards}` + `{cardx}` | Covered |
+| Render tables from ARD | `{gtsummary}`, `{rtables}` | Covered |
+| Exchange datasets as JSON | `{datasetjson}` | Covered |
+| Parse ARM-TS JSON into R | none | **Missing** |
+| Generate ARM-TS from annotated shell | none | **Missing** |
+| Render ARM-TS as annotated shell | none | **Missing** |
+| Validate ARD against ARM-TS | none | **Missing** |
+| Apply AnalysisSet from ARM-TS to data | none | **Missing** |
 
-The bottom **four** rows are `arsbridge`.
+The bottom **five** rows are `arsbridge`.
 
 ---
 
 ## Hands-On: Use the Existing Stack End-to-End
 
-The exercises below assemble the parts that **do** exist (`{cards}` → `{cardx}` →
-`{gtsummary}`) — then enumerate what's still missing.
+The exercises below assemble the parts that **do** exist (`{cards}`, then `{gtsummary}`),
+and then make you feel, by hand, exactly what is still missing.
 
 ---
 
-## Exercise 6.1 — Build a Multi-Variable ARD with `ard_stack()` {data-progressive=FALSE}
+## Exercise 6.1: Build a Multi-Variable ARD with `ard_stack()` {data-progressive=FALSE}
 
-Real demographic tables combine continuous and categorical variables. Use `ard_stack()` to
-build an ARD that covers **AGE (continuous)** and **SEX (categorical)** by treatment arm in
-the Safety Population.
+**Step 1: the annotated shell.** A real demographics table mixes variable types:
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.1.1: Demographic Characteristics</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left; width:44%;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Drug A<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Placebo<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Age, mean (SD) &nbsp;<span style="color:#b3400e; font-weight:bold;">ADSL.AGE</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xx.x (xx.xx)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xx.x (xx.xx)</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Sex, n (%) &nbsp;<span style="color:#b3400e; font-weight:bold;">ADSL.SEX</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Male &nbsp;<span style="color:#b3400e; font-size:0.88em;">ADSL.SEX='M'</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xx (xx.x)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xx (xx.x)</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Female &nbsp;<span style="color:#b3400e; font-size:0.88em;">ADSL.SEX='F'</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xx (xx.x)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xx (xx.x)</td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Grouping: <span style="color:#b3400e;">TRT01A</span> &nbsp;|&nbsp; Two analyses: AN001 (<span style="color:#b3400e;">ADSL.AGE</span> continuous) + AN002 (<span style="color:#b3400e;">ADSL.SEX</span> categorical) sharing AS002 and GF001</div>
+</div>
+
+**Step 2: the ARM-TS encoding.** Two analyses sharing one population and one grouping,
+by ID reference:
+
+```json
+"analyses": [
+  { "id": "AN001", "dataset": "ADSL", "variable": "AGE",
+    "analysisSetId": "AS002", "methodId": "M001" },
+  { "id": "AN002", "dataset": "ADSL", "variable": "SEX",
+    "analysisSetId": "AS002", "methodId": "M002" }
+]
+```
+
+**Step 3: your turn.** Produce both analyses' results in one flat ARD. Use `ard_stack()`
+(Section 6.2) to combine **AGE (continuous)** and **SEX (categorical)** by treatment arm
+in the Safety Population. Both inner calls use the standard `data` / `by` / `variables`
+pattern you know from Chapter 4.
 
 ```{r ch6-ex1, exercise=TRUE, exercise.lines=18}
 ard_demog <- ard_stack(
@@ -282,11 +345,49 @@ unique(ard_demog$variable)
 
 ---
 
-## Exercise 6.2 — Render the ARD as a `{gtsummary}` Table {data-progressive=FALSE}
+## Exercise 6.2: Render the ARD as a `{gtsummary}` Table {data-progressive=FALSE}
 
-Wrap `ard_demog` into a formatted demographics table with `tbl_ard_summary()` and add a
-caption. (The cell renders the table as text — but in a real Rmd it would be a fully styled
-HTML/RTF table.)
+**Step 1: the annotated shell.** The title block of the shell:
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.1.1: Demographic Characteristics</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left; width:44%;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline High Dose<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline Low Dose<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Placebo<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Age (years) &nbsp;<span style="color:#b3400e; font-weight:bold;">ADSL.AGE</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Sex, n (%) &nbsp;<span style="color:#b3400e; font-weight:bold;">ADSL.SEX</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;"></td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;"></td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;"></td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Grouping: <span style="color:#b3400e;">TRT01A</span> &nbsp;|&nbsp; Note: {gtsummary} reads this title as a plain string; it never reads <code>displayTitle</code> from the ARM-TS file</div>
+</div>
+
+**Step 2: the ARM-TS encoding.** In a full ARS file, that title is display metadata:
+
+```json
+{ "id": "OUT001",
+  "displays": [ { "display": {
+    "displayTitle": "Table 14.1.1: Demographic Characteristics (Safety Population)" } } ] }
+```
+
+**Step 3: your turn.** Render it. Wrap `ard_demog` into a formatted demographics table
+with `tbl_ard_summary()`, following the pattern from Section 6.4, and add the caption.
+(The cell renders the table as text here; in a real Rmd it would be a fully styled
+HTML/RTF table.) Note what `{gtsummary}` cannot do: it takes your caption as a plain
+string; it never reads `displayTitle` from an ARM-TS file. That link is part of the gap.
 
 ```{r ch6-ex2-setup, include=FALSE}
 ard_demog <- ard_stack(
@@ -306,7 +407,7 @@ if (!requireNamespace("gtsummary", quietly = TRUE)) {
     by        = ___,                   # the grouping variable
     variables = c(___, ___)            # the two analysis variables
   ) %>%
-    modify_caption("Table 14.1.1 — Demographic Characteristics (Safety Population)")
+    modify_caption("Table 14.1.1: Demographic Characteristics (Safety Population)")
 
   tbl
 }
@@ -327,21 +428,22 @@ if (!requireNamespace("gtsummary", quietly = TRUE)) {
     by        = TRT01A,
     variables = c(AGE, SEX)
   ) %>%
-    modify_caption("Table 14.1.1 — Demographic Characteristics (Safety Population)")
+    modify_caption("Table 14.1.1: Demographic Characteristics (Safety Population)")
   tbl
 }
 # This is the current state of the art end-to-end in open source R:
 # {cards} produces the ARD, {gtsummary} renders the table.
-# What's NOT here: any link back to ARM-TS — no record of WHY the Safety Pop
+# What's NOT here: any link back to ARM-TS. No record of WHY the Safety Pop
 # was chosen, no SAP reference, no AnalysisSet ID, no analysis purpose flag.
 # That's the arsbridge gap.
 ```
 
 ---
 
-## Exercise 6.3 — Identify the Tool for Each Capability {data-progressive=FALSE}
+## Exercise 6.3: Identify the Tool for Each Capability {data-progressive=FALSE}
 
-Fill in the right tool (or `"MISSING / arsbridge"`) for each ARS-related capability.
+Fill in the right tool (or `"MISSING / arsbridge"`) for each ARS-related capability. This
+is the Section 6.8 coverage table, rebuilt from memory.
 
 ```{r ch6-ex3, exercise=TRUE, exercise.lines=20}
 tool_coverage <- tribble(
@@ -379,18 +481,51 @@ tool_coverage <- tribble(
   "Validate ARD against ARM-TS",                      "MISSING / arsbridge"
 )
 tool_coverage
-# Three rows of MISSING — and each of them is one arsbridge function:
+# Three rows of MISSING, and each of them is one arsbridge function:
 #   parse_ars(), shell_to_ars(), validate_ard().
 ```
 
 ---
 
-## Exercise 6.4 — Read the AnalysisSet Manually (the gap exercise) {data-progressive=FALSE}
+## Exercise 6.4: Read the AnalysisSet Manually (the gap exercise) {data-progressive=FALSE}
 
-`{cards}` does **not** read ARM-TS. So today, even though the AnalysisSet `AS002` is sitting
-right there in `re_json`, you (the programmer) have to **manually translate it** into a
-filter. Do exactly that — and notice how mechanical it is. This mechanical step is what
+**Step 1: the annotated shell.**
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.1.1: Demographic Characteristics</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline High Dose</th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Placebo</th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Age (years) &nbsp;<span style="color:#b3400e; font-weight:bold;">ADSL.AGE</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Today: programmer manually writes <code>filter(SAFFL == "Y")</code>. With arsbridge: <code>parse_ars()$analysis_sets[["AS002"]]$filter_fn(adsl)</code></div>
+</div>
+
+**Step 2: the ARM-TS encoding.** Already defined, already loaded, sitting in `re_json`:
+
+```json
+{ "id": "AS002", "name": "Safety Population",
+  "condition": { "dataset": "ADSL", "variable": "SAFFL",
+                 "comparator": "EQ", "value": ["Y"] } }
+```
+
+**Step 3: your turn.** `{cards}` does **not** read ARM-TS. So today, even with `AS002`
+right there in the file, you (the programmer) have to **manually translate it** into a
+filter. Do exactly that, and notice how mechanical it is. This mechanical step is what
 `arsbridge::parse_ars()` will automate.
+
+One new tool for this: inside a dplyr verb, `.data[[x]]` selects a column whose *name is
+stored in a string variable* `x`. You need it here because the column name comes out of
+the parsed JSON as a string (`cond$variable` is `"SAFFL"`), not as a bare column name you
+can type.
 
 ```{r ch6-ex4, exercise=TRUE, exercise.lines=18}
 # Pull the AS002 condition out of the parsed ARM-TS
@@ -427,16 +562,19 @@ cat("Rows in filtered ADSL:", nrow(adsl_filtered), "\n")
 cat("Rows in ARD:          ", nrow(ard), "\n")
 # That filter() call is mechanical translation from a WhereClause.
 # arsbridge::parse_ars() will return a $analysis_sets[["AS002"]]$filter_fn
-# that you can call directly: adsl %>% filter_fn() — no manual rewriting.
+# that you can call directly: adsl %>% filter_fn(). No manual rewriting.
 ```
 
 ---
 
 ## Chapter 6 Knowledge Check
 
+Review map: package purposes (6.2 through 6.5), the parser gap (6.6), siera (6.7), and
+who applies the population filter today (Exercise 6.4).
+
 ```{r ch6-quiz, echo=FALSE}
 quiz(
-  caption = "Chapter 6 — Check Your Understanding",
+  caption = "Chapter 6: Check Your Understanding",
 
   question(
     "Which R package generates ARD data frames from ADaM datasets?",
@@ -522,15 +660,17 @@ quiz(
 
 You now know:
 
-- **`{cards}` + `{cardx}`** generate ARDs from ADaM — fully covered
-- **`{gtsummary}` and `{rtables}`** render tables from ARDs — fully covered
-- **`{datasetjson}`** handles dataset exchange (the format used in FDA Pilot 4) — fully covered
-- **The ARM-TS layer** — parsing, generating from shells, rendering as shells, validating
-  ARD against ARM-TS — is **entirely uncovered** in open-source R
-- **`siera`** is the only existing tool in this space but is commercial, closed, and tied to
-  one vendor
-- You've assembled the existing stack end-to-end (`ard_stack()` → `tbl_ard_summary()`) and
-  felt firsthand the mechanical work that `arsbridge::parse_ars()` will automate
+- **`{cards}` + `{cardx}`** generate ARDs from ADaM: fully covered
+- **`{gtsummary}` and `{rtables}`** render tables from ARDs: fully covered
+- **`{datasetjson}`** handles dataset exchange (the format used in FDA Pilot 4): fully
+  covered
+- **The ARM-TS layer** (parsing, generating from shells, rendering as shells, validating
+  ARD against ARM-TS) is **entirely uncovered** in open-source R
+- **`siera`** is the only existing tool in this space but is commercial, closed, and tied
+  to one vendor
+- You have assembled the existing stack end-to-end (`ard_stack()` into
+  `tbl_ard_summary()`) and felt firsthand the mechanical work that
+  `arsbridge::parse_ars()` will automate
 
-**Next:** Chapter 7 — Package Design Roadmap (the five `arsbridge` functions, the build
-sequence, and the launch plan)
+**Next:** Chapter 7, the Package Design Roadmap: the five `arsbridge` functions, the
+build sequence, and the launch plan

@@ -1,5 +1,5 @@
 ---
-title: "CDISC Analysis Results Standard (ARS) — Interactive Training"
+title: "CDISC Analysis Results Standard (ARS): Interactive Training"
 subtitle: "Chapter 4: ARD Deep Dive"
 author: "Hamid Tavakoli, MD, MSc"
 output:
@@ -9,7 +9,7 @@ output:
     css: www/custom.css
 runtime: shiny_prerendered
 description: >
-  Chapter 4 covers the Analysis Results Dataset — the OperationResult object,
+  Chapter 4 covers the Analysis Results Dataset: the OperationResult object,
   the flat ARD format used by {cards}, the mapping between flat ARD and the
   formal ARS model, and the traceability gap that {arsbridge} will close. You
   will generate continuous, dichotomous, and Kaplan-Meier ARDs from real
@@ -73,35 +73,38 @@ re_json <- jsonlite::read_json("data/reporting_event.json")
 
 ### 4.1 What the ARD Is
 
-The **Analysis Results Dataset (ARD)** is the structured representation of the actual computed
-results of an analysis. It answers the question: *"What number did this analysis produce?"*
+The **Analysis Results Dataset (ARD)** is the structured representation of the actual
+computed results of an analysis. It answers one question: *"What number did this analysis
+produce?"*
 
-In the formal ARS model, ARD lives **inside each `Analysis` object as the `results` slot** —
-a list of `OperationResult` objects. In practice, the ARD is often extracted and stored as a
-**flat tabular data frame** for use with tools like `{cards}` and `{gtsummary}`.
+In the formal ARS model, the ARD lives **inside each `Analysis` object as the `results`
+slot**, a list of `OperationResult` objects. In practice, the ARD is often extracted and
+stored as a **flat tabular data frame** for use with tools like `{cards}` and
+`{gtsummary}`. This chapter covers both forms and, crucially, how they map to each other.
 
-Think of it this way:
+Think of the division of labor this way:
 
 - **ARM-TS** answers *"what was planned and how?"*
 - **ARD** answers *"what number did it produce?"*
 
-Together, they encode the complete picture of an analysis.
+Together, they encode the complete picture of an analysis. Apart, each has a blind spot,
+and Section 4.7 shows exactly where the ARD's blind spot is.
 
 ---
 
 ### 4.2 The OperationResult Object
 
 Each `OperationResult` represents the result of **one statistical operation** for **one
-specific combination of groups**.
+specific combination of groups**. One number, fully addressed.
 
 | Field | Description |
 |-------|-------------|
 | `operationId` | References the `Operation` that produced this result (e.g., "Mean") |
 | `resultGroups` | Which group combination (one entry per grouping factor) |
-| `rawValue` | The unformatted computed value (full precision) — stored as **string** |
-| `formattedValue` | The value formatted per the operation's `resultPattern` — stored as **string** |
+| `rawValue` | The unformatted computed value (full precision), stored as a **string** |
+| `formattedValue` | The value formatted per the operation's `resultPattern`, stored as a **string** |
 
-**`ResultGroup` fields** — one per grouping factor:
+**`ResultGroup` fields**, one per grouping factor:
 
 | Field | Description |
 |-------|-------------|
@@ -109,18 +112,22 @@ specific combination of groups**.
 | `groupId` | References the pre-defined `Group` (e.g., Placebo = "G002") |
 | `groupValue` | The data value, used for data-driven groupings |
 
+Notice that every field except the two values is a reference. An OperationResult never
+repeats what the ARM-TS already knows; it just points at it. That is Chapter 2's
+Principle 1 showing up again.
+
 ---
 
-### 4.3 Worked Example — AE Count Table Results
+### 4.3 Worked Example: AE Count Table Results
 
 Continuing the running case study from Chapter 3: our analysis counts subjects with any
-TEAE by treatment arm using method `M002` (Count + Percentage with Denominator).
+TEAE by treatment arm, using method `M002` (Count + Percentage with Denominator).
 
 **The analysis has:**
 
 - Method `M002` with operations `O007` (Count), `O008` (Percentage), `O009` (Denominator)
 - Grouping factor `GF001` (Treatment Arm) with groups `G001` (Drug XYZ 10mg) and `G002` (Placebo)
-- `resultsByGroup: true` — separate results per arm
+- `resultsByGroup: true`, meaning separate results per arm
 
 **The results (ARD) for this analysis:**
 
@@ -145,21 +152,22 @@ TEAE by treatment arm using method `M002` (Count + Percentage with Denominator).
 
 **Reading any `OperationResult`** is a four-step lookup:
 
-1. `operationId` → find the `Operation` → get the statistic name and `resultPattern`
-2. `resultGroups[i].groupingId` → find the `GroupingFactor` → the dimension
-3. `resultGroups[i].groupId` → find the `Group` → the specific level
-4. `rawValue` / `formattedValue` → the actual number
+1. `operationId` finds the `Operation`, giving you the statistic name and `resultPattern`
+2. `resultGroups[i].groupingId` finds the `GroupingFactor`, giving you the dimension
+3. `resultGroups[i].groupId` finds the `Group`, giving you the specific level
+4. `rawValue` / `formattedValue` give you the actual number
 
-So the first row says: *"The denominator (O009) for the Drug XYZ 10mg arm (G001 within GF001)
-is 45 subjects."*
+So the first row says: *"The denominator (O009) for the Drug XYZ 10mg arm (G001 within
+GF001) is 45 subjects."* Practice reading two or three rows this way and it becomes
+automatic.
 
 ---
 
 ### 4.4 The Flat ARD Format (as used by `{cards}`)
 
-The `{cards}` R package implements a **flat tabular representation** of the ARD. Rather than
-nesting results inside Analysis objects, it produces a data frame where each row is one
-result with full context columns.
+The `{cards}` R package implements a **flat tabular representation** of the ARD. Rather
+than nesting results inside Analysis objects, it produces a data frame where each row is
+one result with full context columns.
 
 **Standard ARD data-frame columns**
 
@@ -177,12 +185,18 @@ result with full context columns.
 | `fmt_fn` | Formatting function | `"xx.x"` |
 | `warning` / `error` | Any messages | `NULL` / `NULL` |
 
-This is what `{gtsummary}` consumes to render tables. The mapping between the flat ARD and
-the nested ARS model is handled by the tooling.
+One convention to burn in now, because you will filter on it constantly: **`stat_name`
+values are lowercase machine names** (`"n"`, `"mean"`, `"sd"`, `"p"`), while `stat_label`
+holds the display form (`"Mean"`, `"Std. Dev."`). When you filter an ARD, you filter on
+`stat_name`.
+
+This flat format is what `{gtsummary}` consumes to render tables. The mapping between the
+flat ARD and the nested ARS model is handled by tooling, and Section 4.5 spells that
+mapping out.
 
 ---
 
-### 4.5 Flat ARD ↔ Formal ARS Model
+### 4.5 Flat ARD to Formal ARS Model, and Back
 
 Understanding how the flat ARD maps to the formal model is **critical for `arsbridge`**.
 
@@ -196,10 +210,10 @@ Understanding how the flat ARD maps to the formal model is **critical for `arsbr
 | `stat` | `OperationResult.rawValue` |
 | *(formatted)* | `OperationResult.formattedValue` |
 
-The flat ARD **loses some ARS-model context** — specifically, it does **not** carry the
-`analysisSetId`, `dataSubsetId`, `methodId`, or `documentRefs`. **This is the traceability gap**:
-a flat ARD by itself cannot tell you which population was used or which SAP section it came
-from. That information lives in the **ARM-TS**.
+Now look at what is *not* in that table. The flat ARD **loses ARS-model context**:
+it does **not** carry the `analysisSetId`, `dataSubsetId`, `methodId`, or `documentRefs`.
+**This is the traceability gap.** A flat ARD by itself cannot tell you which population
+was used or which SAP section it came from. That information lives only in the ARM-TS.
 
 ---
 
@@ -208,10 +222,19 @@ from. That information lives in the **ARM-TS**.
 `{cards}` covers descriptive statistics (continuous, categorical, dichotomous). `{cardx}`
 extends it with t-tests, Wilcoxon, Kaplan-Meier estimates, and regression models.
 
+The workhorse functions share one calling pattern, so learn it once:
+
+- `data`: the analysis dataset (already filtered to the right population)
+- `by`: the grouping variable, unquoted (e.g., `TRT01A`). This becomes `group1`.
+- `variables`: the analysis variable(s), unquoted (e.g., `AGE`)
+- `statistic`: which statistics to compute, per variable
+
+**Continuous summary.** `continuous_summary_fns()` is a helper that expands a character
+vector of statistic names into the functions `{cards}` should run:
+
 ```r
 library(cards)
 
-# Continuous summary
 ard_age <- ard_continuous(
   data = adsl_safe,
   by = TRT01A,
@@ -222,10 +245,29 @@ ard_age <- ard_continuous(
 )
 ```
 
+**Dichotomous (yes/no) outcomes.** `ard_dichotomous()` handles 0/1 flags. Its extra
+argument `value` declares which value counts as the event (here, `any_teae = 1L`). It
+produces three statistics per group: `n` (count with the event), `N` (group total, the
+denominator), and `p` (the proportion, `n/N`). Those are exactly the Count, Denominator,
+and Percentage operations of method `M002` from Section 4.3.
+
+```r
+ard_ae <- ard_dichotomous(
+  data      = analysis_ae,
+  by        = TRT01A,
+  variables = any_teae,
+  value     = list(any_teae = 1L)
+)
+```
+
+**Kaplan-Meier estimates at fixed timepoints.** In ADaM time-to-event data, `AVAL` is the
+time and `CNSR` is the censoring flag (1 = censored, 0 = event). Survival tooling wants an
+*event* indicator, so the convention is `event = "1-CNSR"`, which flips the flag. `times`
+asks for survival estimates at specific timepoints:
+
 ```r
 library(cardx)
 
-# Kaplan-Meier estimates at fixed timepoints
 ard_km <- ard_survival_survfit(
   data = adtte %>% filter(PARAMCD == "OS" & ITTFL == "Y"),
   by = TRT01A,
@@ -234,7 +276,7 @@ ard_km <- ard_survival_survfit(
 )
 ```
 
-You'll generate all three (continuous, dichotomous, KM) in the exercises below.
+You will generate all three (continuous, dichotomous, KM) in the exercises below.
 
 ---
 
@@ -248,38 +290,45 @@ A flat ARD data frame contains the results. It does **not** contain:
 - **Where in the SAP** this analysis is specified
 - **What display context** this belongs to (which table?)
 
-To answer any of these, you need the **ARM-TS**. The ARM-TS is the context layer; the ARD is
+To answer any of these, you need the ARM-TS. The ARM-TS is the context layer; the ARD is
 the result layer. Only together do they form a complete, traceable record.
 
-This is why **a validator that cross-checks ARD against ARM-TS** is the most useful tool that
-currently doesn't exist — and is exactly what `arsbridge::validate_ard()` will build.
+This is why **a validator that cross-checks the ARD against the ARM-TS** is the most
+useful tool that currently does not exist, and it is exactly what
+`arsbridge::validate_ard()` will build.
 
 ---
 
 ### 4.8 `rawValue` vs `formattedValue`
 
-One important detail:
+One important detail before the hands-on work:
 
 - `rawValue` = full-precision computed value, e.g. `"84.44444444"`
 - `formattedValue` = display string, e.g. `"84.4"` (per the operation's `resultPattern`)
 
-Both are stored as **strings** in the ARS model — not numerics. This is deliberate:
+Both are stored as **strings** in the ARS model, not numerics. This is deliberate, and it
+serves two audiences at once:
 
-- It preserves the **exact display representation** (no surprise rounding on read)
-- It keeps the underlying **precision available** for downstream use — e.g., a regulator
-  verifying rounding logic
+- It preserves the **exact display representation**, so nothing silently re-rounds on read
+- It keeps the underlying **precision available** for downstream use, for example a
+  regulator verifying rounding logic
 
 When building `arsbridge`:
 
 - **Traceability validation** compares `rawValue` against a re-computed numeric result
-- **Display validation** compares `formattedValue` against what `resultPattern` would produce
-  from `rawValue`
+- **Display validation** compares `formattedValue` against what `resultPattern` would
+  produce from `rawValue`
 
 ---
 
 ## Hands-On: Generate Real ARDs
 
 ### A look at the analysis dataset
+
+Two objects matter for the exercises. `adsl_safe` you know from earlier chapters. The new
+one is `analysis_ae`: a pre-built analysis dataset with one row per Safety-population
+subject and a flag `any_teae` set to 1 if the subject had at least one TEAE, else 0. This
+subject-level 0/1 shape is exactly what a dichotomous analysis needs.
 
 ```{r ch4-preview, exercise=FALSE, echo=TRUE}
 # adsl_safe = Safety Population (SAFFL='Y')
@@ -298,10 +347,70 @@ head(analysis_ae)
 
 ---
 
-## Exercise 4.1 — Generate a Continuous ARD {data-progressive=FALSE}
+## Exercise 4.1: Generate a Continuous ARD {data-progressive=FALSE}
 
-Generate an ARD for **AGE** by treatment arm in the Safety Population using `ard_continuous()`.
-Expected output: **6 statistics × 3 treatment arms = 18 rows**.
+**Step 1: the annotated shell.**
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.1.1: Demographic Characteristics</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left; width:44%;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline High Dose<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline Low Dose<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Placebo<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Age (years) &nbsp;<span style="color:#b3400e; font-weight:bold;">ADSL.AGE</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;n</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Mean (SD)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Median</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Min, Max</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx, xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx, xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx, xxx</td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Grouping: <span style="color:#b3400e;">TRT01A</span> &nbsp;|&nbsp; Source: <span style="color:#b3400e;">ADSL.AGE</span> &nbsp;|&nbsp; 6 stats × 3 arms = 18 ARD rows</div>
+</div>
+
+**Step 2: the ARM-TS encoding.** The spec side you already know from Chapter 3:
+
+```json
+{ "id": "AN001", "dataset": "ADSL", "variable": "AGE",
+  "analysisSetId": "AS002",
+  "methodId": "M001",
+  "results": [ "<-- 18 OperationResults will land here" ] }
+```
+
+**Step 3: your turn.** Produce the numbers that fill that `results` slot. Generate the ARD
+with `ard_continuous()`; the calling pattern is the one from Section 4.6: `by` takes the
+grouping variable, `variables` takes the analysis variable, both unquoted.
+
+Before you run it, predict the row count: 6 statistics, 3 treatment arms, one row per
+statistic per arm. That is **18 rows**, and each of them corresponds to one
+`OperationResult` in the formal model.
 
 ```{r ch4-ex1, exercise=TRUE, exercise.lines=12}
 # Fill in: `by` = grouping variable, `variables` = analysis variable
@@ -332,16 +441,50 @@ ard_age <- ard_continuous(
   ))
 )
 nrow(ard_age)
-# 18 rows = 6 stats × 3 treatment arms.
+# 18 rows = 6 stats x 3 treatment arms.
 # Each row maps to one ARS OperationResult.
 ```
 
 ---
 
-## Exercise 4.2 — Pull a Specific Statistic Out of the ARD {data-progressive=FALSE}
+## Exercise 4.2: Pull a Specific Statistic Out of the ARD {data-progressive=FALSE}
 
-The ARD is a tabular dataset — you can filter it like any other data frame. Pull the **mean
-AGE for Xanomeline High Dose** out of `ard_age` (already built in your environment).
+**Step 1: the annotated shell.** The one cell you want:
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.1.1: Demographic Characteristics [excerpt]</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left; width:44%;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline High Dose &nbsp;<span style="color:#b3400e; font-size:0.82em; font-weight:normal;">ADSL.TRT01A='Xanomeline High Dose'</span></th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Mean Age &nbsp;<span style="color:#b3400e; font-weight:bold;">ADSL.AGE</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;"><strong>xx.x</strong></td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">This single cell = one ARD row: operationId=O002, groupId=G001, rawValue=?, formattedValue=?</div>
+</div>
+
+**Step 2: the ARM-TS encoding.** In the formal model that cell is one OperationResult:
+
+```json
+{ "operationId": "O002",
+  "resultGroups": [ { "groupId": "G001" } ],
+  "rawValue": "..." }
+```
+
+In the flat ARD, the same result is one row where `group1_level` plays the role of
+`groupId` and `stat_name` plays the role of `operationId` (the Section 4.5 mapping).
+
+**Step 3: your turn.** The ARD is a tabular dataset, so you can filter it like any other
+data frame. That is the whole point of the flat format: results become queryable.
+
+Pull the **mean AGE for Xanomeline High Dose** out of `ard_age` (already built in your
+environment). Remember from Section 4.4 that you filter on `stat_name` using the lowercase
+machine name, so the mean is `"mean"`. The final `pull(stat)` extracts the value column as
+a plain vector instead of a one-row data frame.
 
 ```{r ch4-ex2-setup, include=FALSE}
 ard_age <- ard_continuous(
@@ -372,17 +515,56 @@ ard_age %>%
   filter(group1_level == "Xanomeline High Dose",
          stat_name    == "mean") %>%
   pull(stat)
-# A single numeric — the same value that, in the ARS model,
+# A single numeric: the same value that, in the ARS model,
 # would be stored as OperationResult.rawValue (as a string).
 ```
 
 ---
 
-## Exercise 4.3 — Generate a Dichotomous ARD for TEAE {data-progressive=FALSE}
+## Exercise 4.3: Generate a Dichotomous ARD for TEAE {data-progressive=FALSE}
 
-Goal: count subjects with any TEAE by treatment arm. The analysis dataset `analysis_ae` is
-already built (one row per safety-population subject, `any_teae` = 0/1). Use `ard_dichotomous()`
-and then pull the **percentage** for Xanomeline High Dose.
+**Step 1: the annotated shell.**
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.3.1: Summary of Treatment-Emergent Adverse Events</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left; width:44%;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline High Dose<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX n (%)</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline Low Dose<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX n (%)</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Placebo<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX n (%)</span></th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Subjects with any TEAE &nbsp;<span style="color:#b3400e; font-weight:bold;">ADAE.USUBJID</span><br><span style="color:#b3400e; font-size:0.88em;">ADAE.TRTEMFL='Y'</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx (xx.x)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx (xx.x)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx (xx.x)</td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Grouping: <span style="color:#b3400e;">TRT01A</span> &nbsp;|&nbsp; Format: <span style="color:#b3400e;">XXX (XX.X)</span> &nbsp;|&nbsp; Denominator: N safety subjects per arm</div>
+</div>
+
+**Step 2: the ARM-TS encoding.** The "n (%)" annotation is method `M002` with its three
+operations, and the "(%)" carries a formal denominator reference:
+
+```json
+{ "id": "M002", "name": "Count and Percentage",
+  "operations": [
+    { "id": "O007", "name": "Count",       "resultPattern": "XXX"  },
+    { "id": "O008", "name": "Percentage",  "resultPattern": "XX.X" },
+    { "id": "O009", "name": "Denominator", "resultPattern": "XXX"  }
+  ] }
+```
+
+**Step 3: your turn.** Compute those three statistics per arm. The analysis dataset
+`analysis_ae` is already built (one row per Safety-population subject, `any_teae` = 0/1).
+
+Recall from Section 4.6 how `ard_dichotomous()` works: `value = list(any_teae = 1L)`
+declares that 1 is the event, and the output carries `n` (count), `N` (denominator), and
+`p` (proportion) per arm. Those map one-to-one onto O007 / O009 / O008 above.
+
+Generate the ARD, then pull the **`p` (percentage) row** for Xanomeline High Dose.
 
 ```{r ch4-ex3, exercise=TRUE, exercise.lines=18}
 ard_ae <- ard_dichotomous(
@@ -422,10 +604,63 @@ ard_ae %>%
 
 ---
 
-## Exercise 4.4 — Bonus: A Kaplan-Meier ARD with `{cardx}` {data-progressive=FALSE}
+## Exercise 4.4: Bonus, a Kaplan-Meier ARD with `{cardx}` {data-progressive=FALSE}
 
-Generate a KM ARD for time-to-first-AE from `adtte`, ITT population. (This exercise is
-skipped silently if `{cardx}` isn't installed.)
+**Step 1: the annotated shell.**
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.2.1: Kaplan-Meier Estimates of Survival</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Intent-to-Treat Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.ITTFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left; width:44%;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Treatment A<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Placebo<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Survival probability &nbsp;<span style="color:#b3400e; font-weight:bold;">ADTTE.AVAL</span> &nbsp;<span style="color:#b3400e; font-size:0.88em;">ADTTE.CNSR</span><br><span style="color:#b3400e; font-size:0.85em;">ADTTE.PARAMCD='OS'</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Month 6</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">x.xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">x.xxx</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Month 12</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">x.xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">x.xxx</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Month 18</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">x.xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">x.xxx</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Month 24</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">x.xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">x.xxx</td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Grouping: <span style="color:#b3400e;">TRT01A</span> &nbsp;|&nbsp; DataSubset: <span style="color:#b3400e;">ADTTE.PARAMCD='OS'</span> &nbsp;|&nbsp; Format: <span style="color:#b3400e;">X.XXX</span></div>
+</div>
+
+**Step 2: the ARM-TS encoding.** One operation per requested timepoint:
+
+```json
+{ "id": "M003", "name": "KM Survival Estimates",
+  "operations": [
+    { "id": "O010", "name": "Surv. prob. at Month 6",  "resultPattern": "X.XXX" },
+    { "id": "O011", "name": "Surv. prob. at Month 12", "resultPattern": "X.XXX" },
+    "... one Operation per timepoint ..."
+  ] }
+```
+
+**Step 3: your turn.** Generate the KM ARD from `adtte`, ITT population. Two reminders
+from Section 4.6: `AVAL` is the time variable, and `event = "1-CNSR"` converts the ADaM
+censoring flag into an event indicator. (This exercise is skipped silently if `{cardx}` is
+not installed.)
 
 ```{r ch4-ex4, exercise=TRUE, exercise.lines=20}
 if (!requireNamespace("cardx", quietly = TRUE)) {
@@ -479,10 +714,12 @@ if (!requireNamespace("cardx", quietly = TRUE)) {
 
 ---
 
-## Exercise 4.5 — Map Flat ARD Columns to the Formal Model {data-progressive=FALSE}
+## Exercise 4.5: Map Flat ARD Columns to the Formal Model {data-progressive=FALSE}
 
 This is the conceptual capstone of Chapter 4. Build a small lookup mapping each flat-ARD
-column to its formal-ARS-model path. This mapping is the core knowledge `arsbridge` needs.
+column to its formal-ARS-model path, exactly the table from Section 4.5, reconstructed
+from memory. This mapping is the core knowledge `arsbridge` needs. (The scaffold uses
+`tribble()`, the row-wise table builder you met in Chapter 2.)
 
 ```{r ch4-ex5, exercise=TRUE, exercise.lines=18}
 mappings <- tribble(
@@ -518,16 +755,20 @@ mappings <- tribble(
 mappings
 # Note what's MISSING from the flat ARD:
 #   analysisSetId, dataSubsetId, methodId, documentRefs.
-# Those live only in the ARM-TS — and that's the traceability gap.
+# Those live only in the ARM-TS. That's the traceability gap.
 ```
 
 ---
 
 ## Chapter 4 Knowledge Check
 
+Review map for the questions below: where the ARD lives and OperationResult anatomy
+(Sections 4.1 and 4.2), string storage of values (4.8), the flat-ARD column mapping (4.5),
+the traceability gap (4.5 and 4.7), and the `{cards}` / `{cardx}` division of labor (4.6).
+
 ```{r ch4-quiz, echo=FALSE}
 quiz(
-  caption = "Chapter 4 — Check Your Understanding",
+  caption = "Chapter 4: Check Your Understanding",
 
   question(
     "Where, in the formal ARS model, does the ARD physically live?",
@@ -555,7 +796,7 @@ quiz(
   question(
     "Why are both rawValue and formattedValue stored as STRINGS in the ARS model?",
     answer(
-      "To preserve the exact display representation AND retain full underlying precision — both matter for downstream validation",
+      "To preserve the exact display representation AND retain full underlying precision; both matter for downstream validation",
       correct = TRUE
     ),
     answer("Because JSON cannot encode numeric values"),
@@ -578,7 +819,7 @@ quiz(
   question(
     "What is the 'traceability gap' that arsbridge is meant to close?",
     answer(
-      "The flat ARD alone does NOT carry analysisSetId, dataSubsetId, methodId, or documentRefs — that context lives only in the ARM-TS",
+      "The flat ARD alone does NOT carry analysisSetId, dataSubsetId, methodId, or documentRefs; that context lives only in the ARM-TS",
       correct = TRUE
     ),
     answer("ADaM datasets cannot be linked to SDTM"),
@@ -616,7 +857,7 @@ quiz(
     ),
     answer("The analysis produced two different statistics"),
     answer("The result failed validation"),
-    answer("Both values are wrong — they must be identical"),
+    answer("Both values are wrong; they must be identical"),
     allow_retry = TRUE,
     random_answer_order = TRUE
   )
@@ -629,17 +870,18 @@ quiz(
 
 You now understand:
 
-- The **ARD is the result layer**: `Analysis.results` → `[OperationResult]`
+- The **ARD is the result layer**: `Analysis.results` holds a list of `OperationResult`
+  objects
 - Each `OperationResult` stores **one statistic for one group combination**, with both
   `rawValue` (full precision) and `formattedValue` (display string) as strings
-- The **flat ARD format** (used by `{cards}`) is a tabular extraction of this data — each row
-  is one result with grouping/variable/stat columns
-- The flat ARD alone is **not sufficient for traceability** — `analysisSetId`, `dataSubsetId`,
-  `methodId`, and `documentRefs` live only in the ARM-TS
-- Generating ARDs in R uses **`{cards}`** for descriptive statistics and **`{cardx}`** for KM
-  estimates, t-tests, and regression
-- You've generated **continuous**, **dichotomous**, and **Kaplan-Meier** ARDs from real
+- The **flat ARD format** (used by `{cards}`) is a tabular extraction of this data: each
+  row is one result with grouping/variable/stat columns, filterable like any data frame
+- The flat ARD alone is **not sufficient for traceability**: `analysisSetId`,
+  `dataSubsetId`, `methodId`, and `documentRefs` live only in the ARM-TS
+- Generating ARDs in R uses **`{cards}`** for descriptive statistics and **`{cardx}`** for
+  KM estimates, t-tests, and regression
+- You have generated **continuous**, **dichotomous**, and **Kaplan-Meier** ARDs from real
   pharmaverse data
 
-**Next:** Chapter 5 — The Traceability Chain (re-derive a stored ARD result from ARM-TS +
-ADaM and find a deliberate traceability break)
+**Next:** Chapter 5, The Traceability Chain: re-derive a stored ARD result from ARM-TS
+plus ADaM, and find a deliberate traceability break

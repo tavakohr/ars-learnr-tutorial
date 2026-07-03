@@ -1,5 +1,5 @@
 ---
-title: "CDISC Analysis Results Standard (ARS) — Interactive Training"
+title: "CDISC Analysis Results Standard (ARS): Interactive Training"
 subtitle: "Chapter 2: The ARS Data Model"
 author: "Hamid Tavakoli, MD, MSc"
 output:
@@ -37,23 +37,24 @@ gradethis_setup()
 # Load pharmaverse ADaM datasets
 data("adsl",  package = "pharmaverseadam")
 data("adae",  package = "pharmaverseadam")
+# pharmaverseadam ADSL lacks ITTFL; derive it from ARM (a subject is
+# "randomised / ITT" iff ARM is non-empty). Exercises in this chapter
+# filter adsl on ITTFL directly, so add it to adsl itself.
+adsl <- adsl %>%
+  mutate(ITTFL = ifelse(!is.na(ARM) & ARM != "", "Y", "N"))
 # pharmaverseadam 1.4+ replaced the generic "adtte" with TA-specific
-# datasets; use the oncology one and join subject-level vars in from
-# ADSL. pharmaverseadam ADSL lacks ITTFL, so derive it from ARM (a
-# subject is "randomised / ITT" iff ARM is non-empty).
+# datasets; use the oncology one and join subject-level vars in from ADSL.
 data("adtte_onco", package = "pharmaverseadam")
 adtte <- adtte_onco %>%
   left_join(
-    adsl %>%
-      mutate(ITTFL = ifelse(!is.na(ARM) & ARM != "", "Y", "N")) %>%
-      select(USUBJID, TRT01A, ITTFL),
+    adsl %>% select(USUBJID, TRT01A, ITTFL),
     by = "USUBJID"
   )
 data("adlb",  package = "pharmaverseadam")
 
 # Pre-filter datasets used throughout the tutorial
 adsl_safe <- adsl %>% filter(SAFFL == "Y")
-adsl_itt  <- adsl %>% filter(!is.na(ARM) & ARM != "")
+adsl_itt  <- adsl %>% filter(ITTFL == "Y")
 adae_teae <- adae %>% filter(TRTEMFL == "Y")
 
 # Load sample ARM-TS JSON
@@ -64,9 +65,9 @@ re_json <- jsonlite::read_json("data/reporting_event.json")
 
 ## Chapter 2: The ARS Data Model
 
-### 2.1 Overview — Why a Logical Model?
+### 2.1 Overview: Why a Logical Model?
 
-The ARS data model is a **logical model** — it defines objects and their relationships,
+The ARS data model is a **logical model**. It defines objects and their relationships,
 independent of any specific file format. In practice, ARS is serialized as JSON (or YAML),
 but the model itself is format-agnostic. You could store an ARM-TS in a relational database,
 in YAML, or in protobuf, and it would still be the same logical structure.
@@ -84,39 +85,40 @@ and every output associated with that deliverable.
 Before diving into objects, anchor yourself in the two layers introduced in Chapter 1:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     ARM-TS Layer                        │
-│  (What was planned and how analyses were performed)     │
-│                                                         │
-│  ReportingEvent                                         │
-│  ├── AnalysisSets      (population filters / flags)     │
-│  ├── DataSubsets       (data record filters)            │
-│  ├── AnalysisGroupings (treatment, sex, visit...)       │
-│  ├── Methods           (statistical operations)         │
-│  ├── Analyses          (dataset + variable + method)    │
-│  └── Outputs           (displays / tables)              │
-└─────────────────────────────────────────────────────────┘
++---------------------------------------------------------+
+|                     ARM-TS Layer                        |
+|  (What was planned and how analyses were performed)     |
+|                                                         |
+|  ReportingEvent                                         |
+|  ├── AnalysisSets      (population filters / flags)     |
+|  ├── DataSubsets       (data record filters)            |
+|  ├── AnalysisGroupings (treatment, sex, visit...)       |
+|  ├── Methods           (statistical operations)         |
+|  ├── Analyses          (dataset + variable + method)    |
+|  └── Outputs           (displays / tables)              |
++---------------------------------------------------------+
 
-┌─────────────────────────────────────────────────────────┐
-│                      ARD Layer                          │
-│  (What was actually computed)                           │
-│                                                         │
-│  Lives inside Analysis.results                          │
-│  OperationResult: operationId + resultGroups +          │
-│                   rawValue + formattedValue             │
-└─────────────────────────────────────────────────────────┘
++---------------------------------------------------------+
+|                      ARD Layer                          |
+|  (What was actually computed)                           |
+|                                                         |
+|  Lives inside Analysis.results                          |
+|  OperationResult: operationId + resultGroups +          |
+|                   rawValue + formattedValue             |
++---------------------------------------------------------+
 ```
 
-The ARD is **not** a separate file in the formal model — it lives as the `results` slot
-inside each `Analysis` object. In practice, it is often extracted and stored as a separate
-flat dataset (a data frame) for use with tools like `{cards}`. Chapter 4 covers this in depth.
+Here is a detail that surprises most people: the ARD is **not** a separate file in the
+formal model. It lives as the `results` slot inside each `Analysis` object. In practice,
+teams often extract it and store it as a separate flat dataset (a data frame) for use with
+tools like `{cards}`. Chapter 4 covers that workflow in depth.
 
 ---
 
 ### 2.3 The Complete Object Hierarchy
 
-Here is every class in the ARS model, organized by function. Don't try to memorize this —
-just orient yourself.
+Here is every class in the ARS model, organized by function. Do not try to memorize this
+on the first pass. Just orient yourself; the exercises will make you walk it by hand.
 
 **Root**
 
@@ -124,105 +126,112 @@ just orient yourself.
 ReportingEvent
 ```
 
-The top-level container. Everything for one reporting requirement (e.g., one CSR, one interim
-analysis) lives inside or is referenced from a `ReportingEvent`.
+The top-level container. Everything for one reporting requirement (for example, one CSR or
+one interim analysis) lives inside or is referenced from a `ReportingEvent`.
 
 **Structural / Organizational Objects**
 
 ```
 ReportingEvent
-├── ListOfContents          — structured table of contents for analyses and outputs
+├── ListOfContents          : structured table of contents for analyses and outputs
 │   └── NestedList
-│       └── OrderedListItem — points to an Analysis or Output, with level/order
+│       └── OrderedListItem : points to an Analysis or Output, with level/order
 │
-├── ReferenceDocument       — external file (SAP PDF, program file, etc.)
+├── ReferenceDocument       : external file (SAP PDF, program file, etc.)
 │
-├── TerminologyExtension    — sponsor-defined terms extending CDISC enumerations
+├── TerminologyExtension    : sponsor-defined terms extending CDISC enumerations
 │   └── SponsorTerm
 │
-└── AnalysisOutputCategorization  — implementer-defined category system
-    └── AnalysisOutputCategory    — a single category (e.g., "Safety", "Efficacy")
+└── AnalysisOutputCategorization  : implementer-defined category system
+    └── AnalysisOutputCategory    : a single category (e.g., "Safety", "Efficacy")
 ```
 
 **Population and Data Selection Objects**
 
-These define **who** and **what data** is included in analyses. This maps directly to WHERE
-clauses in your annotated shells.
+These define **who** is included and **which data records** count. This maps directly to
+the WHERE clauses in your annotated shells. Note the split carefully, because it matters
+throughout the standard and the quiz will test it:
+
+- An **AnalysisSet** filters *subjects*. It is a subject-level population, evaluated
+  against ADSL: ITT, Per-Protocol, Safety.
+- A **DataSubset** filters *data records* within an analysis dataset: one visit, one
+  parameter, one time window. A subject can pass the AnalysisSet but still have individual
+  records excluded by a DataSubset.
 
 ```
 ReportingEvent
-├── AnalysisSets            — subject populations (ITT, PP, Safety, etc.)
-│   └── WhereClause         — the filter logic (e.g., ADSL.ITTFL EQ 'Y')
+├── AnalysisSets            : subject populations (ITT, PP, Safety, etc.)
+│   └── WhereClause         : the filter logic (e.g., ADSL.ITTFL EQ 'Y')
 │
-├── DataSubsets             — data record filters (e.g., a specific visit, PARAMCD)
+├── DataSubsets             : data record filters (e.g., a specific visit, PARAMCD)
 │   └── WhereClause
 │
-└── AnalysisGroupings       — factors for subdividing (treatment arm, sex, visit)
+└── AnalysisGroupings       : factors for subdividing (treatment arm, sex, visit)
     └── GroupingFactor
-        └── Group           — one level within the factor (e.g., "Treatment A")
+        └── Group           : one level within the factor (e.g., "Treatment A")
             └── WhereClause
 ```
 
 **Method Objects**
 
-These define **how** analyses are performed. One method can be reused across many analyses —
-this is a core design principle (Principle 1 below).
+These define **how** analyses are performed. One method can be reused across many analyses.
+That reuse is a core design principle, and we will come back to it in Section 2.6.
 
 ```
 ReportingEvent
 └── Methods
-    └── AnalysisMethod       — a named set of statistical operations
-        ├── Operations        — one or more statistical operations
-        │   └── Operation     —  each produces one result
-        │       └── ReferencedOperationRelationship  — e.g., NUMERATOR / DENOMINATOR
+    └── AnalysisMethod       : a named set of statistical operations
+        ├── Operations       : one or more statistical operations
+        │   └── Operation    : each produces one result
+        │       └── ReferencedOperationRelationship  (e.g., NUMERATOR / DENOMINATOR)
         │
-        └── AnalysisProgrammingCodeTemplate  — reusable code template with parameters
+        └── AnalysisProgrammingCodeTemplate  : reusable code template with parameters
             └── TemplateCodeParameter
 ```
 
 **Analysis Objects**
 
-Each `Analysis` is one specific analysis in the study. It ties together: a dataset, a variable,
-a population, optional data filters, optional groupings, and a method.
+Each `Analysis` is one specific analysis in the study. It ties together a dataset, a
+variable, a population, optional data filters, optional groupings, and a method.
 
 ```
 ReportingEvent
 └── Analyses
     └── Analysis
-        ├── dataset          — e.g., "ADTTE"
-        ├── variable         — e.g., "AVAL"
-        ├── analysisSetId    — references an AnalysisSet (population)
-        ├── dataSubsetId     — references a DataSubset (optional)
-        ├── orderedGroupings — references GroupingFactors (treatment, visit, etc.)
-        ├── methodId         — references an AnalysisMethod
-        ├── reason           — SPECIFIED IN PROTOCOL / SPECIFIED IN SAP / DATA DRIVEN
-        ├── purpose          — PRIMARY / SECONDARY / EXPLORATORY OUTCOME MEASURE
-        ├── documentRefs     — links to SAP, program files
-        ├── programmingCode  — actual R/SAS code or reference to file
-        └── results          — the ARD (OperationResults)
+        ├── dataset          : e.g., "ADTTE"
+        ├── variable         : e.g., "AVAL"
+        ├── analysisSetId    : references an AnalysisSet (population)
+        ├── dataSubsetId     : references a DataSubset (optional)
+        ├── orderedGroupings : references GroupingFactors (treatment, visit, etc.)
+        ├── methodId         : references an AnalysisMethod
+        ├── reason           : SPECIFIED IN PROTOCOL / SPECIFIED IN SAP / DATA DRIVEN
+        ├── purpose          : PRIMARY / SECONDARY / EXPLORATORY OUTCOME MEASURE
+        ├── documentRefs     : links to SAP, program files
+        ├── programmingCode  : actual R/SAS code or reference to file
+        └── results          : the ARD (OperationResults)
             └── OperationResult
-                ├── operationId     — which operation this result is for
-                ├── resultGroups    — which group combination
-                ├── rawValue        — unformatted result
-                └── formattedValue  — result formatted per resultPattern
+                ├── operationId     : which operation this result is for
+                ├── resultGroups    : which group combination
+                ├── rawValue        : unformatted result
+                └── formattedValue  : result formatted per resultPattern
 ```
 
 **Output / Display Objects**
 
-These define the **display** — the table itself, its title, footnotes, and how analyses map
+These define the **display**: the table itself, its title, footnotes, and how analyses map
 into it.
 
 ```
 ReportingEvent
 └── Outputs
     └── Output
-        ├── fileSpecifications  — output file format (PDF, RTF, TXT)
-        ├── programmingCode     — code to generate the display
-        └── displays            — ordered list of displays in the output
+        ├── fileSpecifications  : output file format (PDF, RTF, TXT)
+        ├── programmingCode     : code to generate the display
+        └── displays            : ordered list of displays in the output
             └── OrderedDisplay
                 └── OutputDisplay
-                    ├── displayTitle      — the table title
-                    └── displaySections   — title, header, footnote, abbreviation, footer
+                    ├── displayTitle      : the table title
+                    └── displaySections   : title, header, footnote, abbreviation, footer
                         └── DisplaySection
                             └── OrderedDisplaySubSection
                                 └── DisplaySubSection (text)
@@ -232,9 +241,9 @@ ReportingEvent
 
 ### 2.4 The WhereClause System
 
-The `WhereClause` is the most important structural pattern in ARS because it appears in **three
-different contexts**: `AnalysisSet`, `DataSubset`, and `Group`. Master this and you understand
-60% of the model.
+The `WhereClause` is the most important structural pattern in ARS, because it appears in
+**three different contexts**: `AnalysisSet`, `DataSubset`, and `Group`. Master this one
+pattern and you understand 60% of the model.
 
 **Simple Condition**
 
@@ -249,9 +258,12 @@ different contexts**: `AnalysisSet`, `DataSubset`, and `Group`. Master this and 
 }
 ```
 
-This directly maps to: `WHERE ADSL.ITTFL = 'Y'` in SAS, or `filter(ITTFL == "Y")` in R.
+This directly maps to `WHERE ADSL.ITTFL = 'Y'` in SAS, or `filter(ITTFL == "Y")` in R.
 
 **Compound Expression**
+
+Real filters are rarely a single condition. A compound expression joins multiple
+WhereClauses with a logical operator:
 
 ```json
 {
@@ -279,19 +291,34 @@ This directly maps to: `WHERE ADSL.ITTFL = 'Y'` in SAS, or `filter(ITTFL == "Y")
 }
 ```
 
-- **Logical operators:** `AND`, `OR`, `NOT`
+- **Logical operators:** `AND`, `OR`, `NOT`. These three, and only these three.
 - **Comparators:** `EQ`, `NE`, `GT`, `GE`, `LT`, `LE`, `IN`, `NOTIN`
+
+Each comparator has a mechanical R equivalent. This mapping is worth internalizing now,
+because translating WhereClauses into dplyr filters is exactly what you will do in the
+exercises (and what `arsbridge` automates):
+
+| ARS comparator | dplyr equivalent |
+|:---------------|:-----------------|
+| `EQ`  | `==` |
+| `NE`  | `!=` |
+| `GT` / `GE` | `>` / `>=` |
+| `LT` / `LE` | `<` / `<=` |
+| `IN`  | `%in%` |
+| `NOTIN` | `!(x %in% ...)` |
 
 **Referenced WhereClause**
 
-A `WhereClause` can reference another already-defined clause by its ID (e.g., reusing an
-`AnalysisSet` as part of a `Group` definition). This avoids repeating complex logic.
+A `WhereClause` can also reference another already-defined clause by its ID, for example
+reusing an `AnalysisSet` as part of a `Group` definition. This avoids repeating complex
+logic and keeps a single source of truth for each filter.
 
 ---
 
 ### 2.5 The Controlled Terminology
 
-ARS uses **four extensible enumerations**. These are the only controlled terms in the model:
+ARS keeps its controlled vocabulary deliberately small: **four extensible enumerations**.
+These are the only controlled terms in the model.
 
 | Enumeration | Values | What it encodes |
 |-------------|--------|-----------------|
@@ -300,7 +327,12 @@ ARS uses **four extensible enumerations**. These are the only controlled terms i
 | `OperationRoleEnum` | NUMERATOR, DENOMINATOR | Relationship between operations (for % calculations) |
 | `OutputFileTypeEnum` | pdf, rtf, txt | File format of output |
 
-All four are **extensible** — sponsors can add their own terms via `TerminologyExtension`.
+All four are **extensible**: sponsors can add their own terms via `TerminologyExtension`.
+
+One structural detail you will need in Exercise 2.5: in the JSON, fields like `reason` and
+`purpose` are not plain strings. Each is a small object holding a `controlledTerm` field
+(and, for sponsor extensions, a `sponsorTermId` instead). So in parsed R you reach the
+value with `an$reason$controlledTerm`, not `an$reason`.
 
 ---
 
@@ -309,26 +341,57 @@ All four are **extensible** — sponsors can add their own terms via `Terminolog
 **Principle 1: Reuse over repetition**
 
 Methods, AnalysisSets, DataSubsets, and Groups are defined once and referenced by ID from
-multiple Analyses. If 50 analyses all use the ITT population, there is one `AnalysisSet` with
-`id = "AS001"` and all 50 analyses reference `analysisSetId = "AS001"`. This is how the model
-enforces consistency.
+multiple Analyses. Here is the pattern in JSON, because you will write it constantly.
+
+**Define once**, in the top-level `analysisSets` collection:
+
+```json
+"analysisSets": [
+  { "id": "AS001",
+    "name": "ITT Population",
+    "condition": { "dataset": "ADSL", "variable": "ITTFL",
+                   "comparator": "EQ", "value": ["Y"] } }
+]
+```
+
+**Reference everywhere**, from any number of analyses. Note that the analyses carry only
+the ID string, never a copy of the condition:
+
+```json
+"analyses": [
+  { "id": "AN001", "name": "Age Summary",
+    "analysisSetId": "AS001",  "...": "..." },
+
+  { "id": "AN002", "name": "Weight Summary",
+    "analysisSetId": "AS001",  "...": "..." },
+
+  { "id": "AN003", "name": "Response Rate",
+    "analysisSetId": "AS001",  "...": "..." }
+]
+```
+
+If 50 analyses use the ITT population, there is still exactly one `AS001`, and 50 lines
+saying `"analysisSetId": "AS001"`. This is how the model enforces consistency: change the
+definition in one place and every analysis that references it follows. It is also why, in
+production, a wrong population filter is a one-line fix instead of a 50-analysis hunt.
 
 **Principle 2: Separation of specification from results**
 
-The specification (what to do) and the results (what was computed) live in the same `Analysis`
-object. The `results` slot contains `OperationResult` objects — this is the ARD. The full
-context of a result is always navigable from the result itself.
+The specification (what to do) and the results (what was computed) live in the same
+`Analysis` object. The `results` slot contains `OperationResult` objects, and that is the
+ARD. The full context of a result is always navigable from the result itself.
 
 **Principle 3: Ordered everything**
 
 Lists in ARS are ordered explicitly using `level` and `order` integer fields. The
 `ListOfContents` uses this to define the table of contents. `OrderedGroupings` uses it to
-define the sequence of grouping factors. This is important for display rendering.
+define the sequence of grouping factors. This matters for display rendering: the model
+never relies on implicit list position.
 
 **Principle 4: Extensibility**
 
-Where CDISC controlled terms don't cover a sponsor's needs, the `TerminologyExtension` mechanism
-allows adding custom terms while remaining conformant with the standard.
+Where CDISC controlled terms do not cover a sponsor's needs, the `TerminologyExtension`
+mechanism allows adding custom terms while remaining conformant with the standard.
 
 ---
 
@@ -337,18 +400,21 @@ allows adding custom terms while remaining conformant with the standard.
 ```
 ReportingEvent (1)
     |
-    ├─── (many) AnalysisSet          ← referenced by Analysis.analysisSetId
-    ├─── (many) DataSubset           ← referenced by Analysis.dataSubsetId
-    ├─── (many) GroupingFactor       ← referenced by OrderedGroupingFactor.groupingId
-    │            └── (many) Group    ← referenced by ResultGroup.groupId
-    ├─── (many) AnalysisMethod       ← referenced by Analysis.methodId
-    │            └── (many) Operation ← referenced by OperationResult.operationId
-    ├─── (many) Analysis             ← referenced by OrderedListItem.analysisId
+    ├─── (many) AnalysisSet          <- referenced by Analysis.analysisSetId
+    ├─── (many) DataSubset           <- referenced by Analysis.dataSubsetId
+    ├─── (many) GroupingFactor       <- referenced by OrderedGroupingFactor.groupingId
+    │            └── (many) Group    <- referenced by ResultGroup.groupId
+    ├─── (many) AnalysisMethod       <- referenced by Analysis.methodId
+    │            └── (many) Operation <- referenced by OperationResult.operationId
+    ├─── (many) Analysis             <- referenced by OrderedListItem.analysisId
     │            └── (many) OperationResult (ARD lives here)
-    ├─── (many) Output               ← referenced by OrderedListItem.outputId
+    ├─── (many) Output               <- referenced by OrderedListItem.outputId
     │            └── (many) OutputDisplay
-    └─── (many) ReferenceDocument    ← referenced by DocumentReference.referenceDocumentId
+    └─── (many) ReferenceDocument    <- referenced by DocumentReference.referenceDocumentId
 ```
+
+Read the arrows as "is referenced by". Every relationship in the model is an ID reference,
+never a copy. That is Principle 1 made concrete.
 
 ---
 
@@ -356,8 +422,13 @@ ReportingEvent (1)
 
 ### Orient to the sample ARM-TS
 
-The sample ARM-TS JSON (`reporting_event.json`) is already loaded as `re_json`. Take a look
-at the top-level structure before the exercises.
+The sample ARM-TS JSON (`reporting_event.json`) is already loaded as `re_json`, the same
+file you met in Chapter 1. Remember from that chapter: parsed JSON becomes a nested R list,
+and you reach named fields with `$`.
+
+Take a look at the top-level structure before the exercises. `names()` lists the field
+names of the root ReportingEvent; each one corresponds to a branch of the hierarchy diagram
+in Section 2.3.
 
 ```{r ch2-preview, exercise=FALSE, echo=TRUE}
 # Top-level fields of the ReportingEvent
@@ -373,15 +444,37 @@ cat("Methods:             ", length(re_json$methods),             "\n")
 cat("Analyses:            ", length(re_json$analyses),            "\n")
 ```
 
+One more navigation rule before you start: fields that hold *many* objects (like
+`analysisSets` or `analyses`) parse as unnamed lists, so you index into them with
+`[[1]]`, `[[2]]`, and so on. `re_json$analysisSets[[1]]` is the first AnalysisSet object,
+and from there `$` works again: `re_json$analysisSets[[1]]$id`.
+
 ---
 
-## Exercise 2.1 — Parse and Explore the ARM-TS {data-progressive=FALSE}
+## Exercise 2.1: Parse and Explore the ARM-TS {data-progressive=FALSE}
 
-Walk the object hierarchy. The structure mirrors the diagram in Section 2.3 — every named
-field you see on the JSON is an object class in the model.
+**Step 1: the annotated shell.** The shell package header you write today:
+
+> *Study: CDISC Pilot Study. Deliverable: CSR. Contains: populations, methods, analyses.*
+
+**Step 2: the ARM-TS encoding.** That header is the top level of the ReportingEvent:
+
+```json
+{
+  "id": "RE001",
+  "name": "CDISC Pilot Study CSR",
+  "analysisSets":      [ "..." ],
+  "analysisGroupings": [ "..." ],
+  "methods":           [ "..." ],
+  "analyses":          [ "..." ]
+}
+```
+
+**Step 3: your turn.** Walk the object hierarchy. The structure mirrors the diagram in
+Section 2.3; every named field you see on the JSON is an object class in the model.
 
 ```{r ch2-ex1, exercise=TRUE, exercise.lines=12}
-# re_json is the parsed ARM-TS — the root ReportingEvent
+# re_json is the parsed ARM-TS, i.e. the root ReportingEvent
 
 # 1. Print the reporting event name
 re_json$___
@@ -405,20 +498,51 @@ length(re_json$analyses)
 re_json$analysisSets[[1]]$id
 # "CDISC Pilot Study CSR"
 # 1 analysis in this minimal example
-# "AS001" — the ITT Population
+# "AS001", the ITT Population
 ```
 
 ---
 
-## Exercise 2.2 — WhereClause to dplyr Filter {data-progressive=FALSE}
+## Exercise 2.2: WhereClause to dplyr Filter {data-progressive=FALSE}
 
-This is the key bridge exercise. The ARM-TS Safety Population AnalysisSet (`AS002`) has the
-condition below. **Translate it into a dplyr filter and count the subjects.**
+This is the key bridge exercise of the chapter.
 
-> dataset: `"ADSL"`
-> variable: `"SAFFL"`
-> comparator: `"EQ"`
-> value: `["Y"]`
+**Step 1: the annotated shell.** The population note on every safety table:
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.3.1: Summary of Adverse Events</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Treatment A</th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Treatment B</th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px; color:#888; font-style:italic;" colspan="3">[analyses...]</td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Filter applied: <span style="color:#b3400e;">ADSL.SAFFL EQ 'Y'</span> — maps to ARS AnalysisSet AS002</div>
+</div>
+
+**Step 2: the ARM-TS encoding.** That note is the AnalysisSet `AS002`:
+
+```json
+{
+  "id": "AS002",
+  "name": "Safety Population",
+  "condition": {
+    "dataset": "ADSL",
+    "variable": "SAFFL",
+    "comparator": "EQ",
+    "value": ["Y"]
+  }
+}
+```
+
+**Step 3: your turn.** Translate the condition into a dplyr filter and count the subjects.
+Per the Section 2.4 mapping table, `EQ` becomes `==`. The rest is reading the condition
+fields: variable on the left, value on the right.
 
 ```{r ch2-ex2, exercise=TRUE, exercise.lines=10}
 # Translate the WhereClause into a dplyr filter on adsl,
@@ -438,14 +562,14 @@ adsl %>%
 adsl %>%
   filter(SAFFL == "Y") %>%
   nrow()
-# This is exactly what arsbridge::parse_ars() will do automatically —
+# This is exactly what arsbridge::parse_ars() will do automatically:
 # extract the WhereClause and generate this filter expression for you.
 ```
 
 ```{r ch2-ex2-check}
 grade_result(
   pass_if(~ .result == nrow(dplyr::filter(adsl, SAFFL == "Y")),
-          "Correct — that's the Safety Population. A WhereClause maps mechanically to a dplyr filter; this is the core of arsbridge::parse_ars()."),
+          "Correct. That's the Safety Population. A WhereClause maps mechanically to a dplyr filter; this is the core of arsbridge::parse_ars()."),
   fail_if(~ TRUE,
           "Try: adsl %>% filter(SAFFL == 'Y') %>% nrow()")
 )
@@ -453,14 +577,47 @@ grade_result(
 
 ---
 
-## Exercise 2.3 — Read a Compound WhereClause {data-progressive=FALSE}
+## Exercise 2.3: Read a Compound WhereClause {data-progressive=FALSE}
 
-Real WhereClauses are often compound — joined by `AND`, `OR`, or `NOT`. Translate this
-compound expression:
+Real WhereClauses are often compound, joined by `AND`, `OR`, or `NOT` (Section 2.4).
 
-> **AND** of:
-> - `ADSL.ITTFL EQ 'Y'`
-> - `ADSL.AGE GE 18`
+**Step 1: the annotated shell.** A two-part population note:
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.X.X: Efficacy Summary</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:6px;">Adult Intent-to-Treat Population (<span style="color:#b3400e; font-weight:bold;">ADSL.ITTFL='Y' AND ADSL.AGE&gt;=18</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Treatment A</th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Placebo</th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px; color:#888; font-style:italic;" colspan="3">[analyses...]</td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Compound filter: <span style="color:#b3400e;">ADSL.ITTFL EQ 'Y'</span> AND <span style="color:#b3400e;">ADSL.AGE GE 18</span> — one compoundExpression, logicalOperator = "AND"</div>
+</div>
+
+**Step 2: the ARM-TS encoding.** Two conditions under one logical operator:
+
+```json
+{
+  "compoundExpression": {
+    "logicalOperator": "AND",
+    "whereClauses": [
+      { "condition": { "dataset": "ADSL", "variable": "ITTFL",
+                       "comparator": "EQ", "value": ["Y"] } },
+      { "condition": { "dataset": "ADSL", "variable": "AGE",
+                       "comparator": "GE", "value": ["18"] } }
+    ]
+  }
+}
+```
+
+**Step 3: your turn.** An `AND` of two conditions means a row must satisfy both; in dplyr
+that is `&` inside one `filter()` call, or equivalently two chained `filter()` calls.
+Note the second comparator: `GE` maps to `>=`, not `==`.
 
 ```{r ch2-ex3, exercise=TRUE, exercise.lines=10}
 # Filter adsl to subjects who are BOTH in the ITT population AND aged 18+
@@ -489,10 +646,16 @@ adsl %>%
 
 ---
 
-## Exercise 2.4 — Identify the Object Types {data-progressive=FALSE}
+## Exercise 2.4: Identify the Object Types {data-progressive=FALSE}
 
-Given a scenario, match it to the correct ARS object. This is how you'll think when reading
-an annotated shell and translating it into ARM-TS.
+Now flip direction. Instead of translating ARS to R, take phrases straight out of an
+annotated shell and name the ARS object each one becomes. This is how you will think when
+reading a shell and translating it into ARM-TS: every annotation decomposes into one of
+six object types you met in Section 2.3.
+
+The scaffold below uses `tribble()`, a tidyverse helper that builds a small data frame
+row by row (column names start with `~`, then each line is one row). You only need to fill
+in the right-hand values.
 
 ```{r ch2-ex4, exercise=TRUE, exercise.lines=20}
 # Each row below is something you might find in an annotated shell.
@@ -513,12 +676,12 @@ mappings
 
 ```{r ch2-ex4-hint-1}
 # Choose from:
-#   "AnalysisSet"        — subject-level population filter
-#   "DataSubset"         — data-record-level filter
-#   "AnalysisGrouping"   — factor splitting results into groups
-#   "AnalysisMethod"     — set of statistical operations
-#   "Analysis"           — the dataset + variable + method binding
-#   "DocumentReference"  — link to external document
+#   "AnalysisSet"        : subject-level population filter
+#   "DataSubset"         : data-record-level filter
+#   "AnalysisGrouping"   : factor splitting results into groups
+#   "AnalysisMethod"     : set of statistical operations
+#   "Analysis"           : the dataset + variable + method binding
+#   "DocumentReference"  : link to external document
 ```
 
 ```{r ch2-ex4-solution}
@@ -538,10 +701,78 @@ mappings
 
 ---
 
-## Exercise 2.5 — Walk an Analysis Object {data-progressive=FALSE}
+## Exercise 2.5: Walk an Analysis Object {data-progressive=FALSE}
 
-The first (and only) `Analysis` in `re_json` is the Age Summary by Treatment Arm. Pull out
-its key fields to confirm the model.
+**Step 1: the annotated shell.** One shell row, as your lead writes it:
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.1.1: Demographic Characteristics</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left; width:42%;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline High Dose<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline Low Dose<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Placebo<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Age (years) &nbsp;<span style="color:#b3400e; font-weight:bold;">ADSL.AGE</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;n</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Mean (SD)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Median</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Min, Max</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx, xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx, xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx, xxx</td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Grouping: <span style="color:#b3400e;">TRT01A</span> &nbsp;|&nbsp; Method: n / Mean / SD / Median / Min / Max &nbsp;|&nbsp; SAP §8.1 (PRIMARY)</div>
+</div>
+
+**Step 2: the ARM-TS encoding.** That row is one `Analysis` object; note that population
+and method appear only as ID references (Principle 1):
+
+```json
+{
+  "id": "AN001",
+  "dataset": "ADSL",
+  "variable": "AGE",
+  "analysisSetId": "AS002",
+  "methodId": "M001",
+  "reason":  { "controlledTerm": "SPECIFIED IN SAP" },
+  "purpose": { "controlledTerm": "PRIMARY OUTCOME MEASURE" }
+}
+```
+
+**Step 3: your turn.** The first (and only) `Analysis` in `re_json` is exactly this
+object. Pull out its key fields to confirm the model matches the diagram in Section 2.3.
+
+Two things to remember from earlier sections:
+
+- Most fields (`dataset`, `variable`, `analysisSetId`, `methodId`) are plain strings, so
+  `an$dataset` works directly.
+- `reason` and `purpose` are controlled-terminology objects (Section 2.5), so the value
+  lives one level down: `an$reason$controlledTerm`.
 
 ```{r ch2-ex5, exercise=TRUE, exercise.lines=15}
 # Access the first Analysis object
@@ -581,10 +812,60 @@ cat("purpose:  ",       an$purpose$controlledTerm, "\n")
 
 ---
 
-## Exercise 2.6 — Read an OperationResult (a peek at the ARD) {data-progressive=FALSE}
+## Exercise 2.6: Read an OperationResult (a peek at the ARD) {data-progressive=FALSE}
 
-Inside `Analysis.results` lives the ARD. Each row is one `OperationResult`. Pull the mean
-age for Xanomeline High Dose out of the sample.
+**Step 1: the annotated shell.** One filled-in table cell:
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.1.1: Demographic Characteristics [excerpt]</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left; width:44%;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline High Dose &nbsp;<span style="color:#b3400e; font-size:0.85em; font-weight:normal;">ADSL.TRT01A='Xanomeline High Dose'</span></th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Mean Age &nbsp;<span style="color:#b3400e; font-weight:bold;">ADSL.AGE</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;"><strong>74.4</strong></td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Format: <span style="color:#b3400e;">XXX.X</span> &nbsp;|&nbsp; rawValue: 74.38095 &nbsp;&rarr;&nbsp; formattedValue: 74.4</div>
+</div>
+
+**Step 2: the ARM-TS encoding.** That one cell is one `OperationResult` inside
+`Analysis.results`; every field except the two values is an ID reference back to the spec:
+
+```json
+{
+  "operationId": "O002",
+  "resultGroups": [ { "groupingId": "GF001", "groupId": "G001" } ],
+  "rawValue": "74.38095",
+  "formattedValue": "74.4"
+}
+```
+
+### Concept first: the anatomy of one result
+
+Inside `Analysis.results` lives the ARD. Each entry is one `OperationResult`, and you
+already know its four key fields from the hierarchy diagram:
+
+- `operationId`: which statistical operation produced this value (here, `O002` is the Mean)
+- `resultGroups`: which group combination the value belongs to. This is a *list*, because
+  a result can sit at the intersection of several groupings (arm by sex, arm by visit).
+  Each entry holds a `groupId`, so the first one is `res$resultGroups[[1]]$groupId`.
+- `rawValue`: the number at full precision, exactly as computed
+- `formattedValue`: the display-ready string, formatted according to the operation's
+  `resultPattern` (a pattern like `"XXX.X"` means one decimal place)
+
+Why carry both values? Because they serve different audiences. `rawValue` lets a QC
+programmer or a regulator re-compute and compare without rounding noise. `formattedValue`
+is what lands in the table. A static PDF gives you only the second one; the ARD preserves
+both. This pair is arguably the single most important innovation of the ARD over a
+formatted table.
+
+**Step 3: your turn.** Pull the mean age for the Xanomeline High Dose arm out of the
+sample; the JSON above is literally `results[[2]]` of the analysis you walked in
+Exercise 2.5.
 
 ```{r ch2-ex6, exercise=TRUE, exercise.lines=15}
 # results is a list of OperationResult objects.
@@ -608,17 +889,20 @@ cat("formattedValue: ", res$formattedValue,                 "\n")
 # groupId:        G001        (Xanomeline High Dose)
 # rawValue:       74.38095    (full precision)
 # formattedValue: 74.4        (per the operation's resultPattern "XXX.X")
-# This pair (rawValue + formattedValue) is the single most important
-# innovation of the ARD over a static PDF table — both precisions are preserved.
 ```
 
 ---
 
 ## Chapter 2 Knowledge Check
 
+Everything below comes from Sections 2.1 through 2.6 and the exercises. If a question
+stumps you: the hierarchy and the AnalysisSet vs DataSubset split are in 2.3, WhereClause
+operators and comparators in 2.4, the enumerations in 2.5, the design principles in 2.6,
+and the rawValue/formattedValue pair in Exercise 2.6.
+
 ```{r ch2-quiz, echo=FALSE}
 quiz(
-  caption = "Chapter 2 — Check Your Understanding",
+  caption = "Chapter 2: Check Your Understanding",
 
   question(
     "What is the root object in the ARS data model?",
@@ -637,7 +921,7 @@ quiz(
       correct = TRUE
     ),
     answer("AnalysisSet is for ADaM; DataSubset is for SDTM"),
-    answer("They are the same — both filter rows from any dataset"),
+    answer("They are the same; both filter rows from any dataset"),
     answer("AnalysisSet applies only to ADSL; DataSubset applies only to BDS datasets"),
     allow_retry = TRUE,
     random_answer_order = TRUE
@@ -674,7 +958,7 @@ quiz(
   ),
 
   question(
-    "What does Principle 1 — 'Reuse over repetition' — imply for the data model?",
+    "What does Principle 1, 'Reuse over repetition', imply for the data model?",
     answer("Methods, AnalysisSets, and Groups are defined once and referenced by ID from many Analyses", correct = TRUE),
     answer("Every Analysis must define its own private Method"),
     answer("Each ReportingEvent must contain only one AnalysisSet"),
@@ -717,15 +1001,16 @@ You now know:
 - The ARS model has a single root: **`ReportingEvent`**
 - ARM-TS objects define the specification: **AnalysisSets, DataSubsets, Groupings, Methods,
   Analyses, Outputs**
-- ARD lives **inside `Analysis.results`** as a list of `OperationResult` objects — not as a
-  separate top-level structure
-- **`WhereClause`** is the universal filter mechanism (simple condition, compound expression,
-  or reference) and maps mechanically to a dplyr `filter()`
-- Objects are defined once and referenced by ID — **reuse is a core design principle**
-- Four extensible controlled terminologies cover **reason, purpose, operation role, and file
-  type**
-- An `OperationResult` carries both `rawValue` (full precision) and `formattedValue` (display
-  string)
+- **AnalysisSet filters subjects; DataSubset filters data records.** Keep that split sharp.
+- The ARD lives **inside `Analysis.results`** as a list of `OperationResult` objects, not
+  as a separate top-level structure
+- **`WhereClause`** is the universal filter mechanism (simple condition, compound
+  expression, or reference) and maps mechanically to a dplyr `filter()`
+- Objects are defined once and referenced by ID; **reuse is a core design principle**
+- Four extensible controlled terminologies cover **reason, purpose, operation role, and
+  file type**
+- An `OperationResult` carries both `rawValue` (full precision) and `formattedValue`
+  (display string)
 
-**Next:** Chapter 3 — ARM-TS Deep Dive (every object with examples and field-by-field
-annotated-shell mappings)
+**Next:** Chapter 3, the ARM-TS Deep Dive: every object with examples and field-by-field
+annotated-shell mappings

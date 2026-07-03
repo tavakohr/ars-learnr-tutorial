@@ -1,5 +1,5 @@
 ---
-title: "CDISC Analysis Results Standard (ARS) — Interactive Training"
+title: "CDISC Analysis Results Standard (ARS): Interactive Training"
 subtitle: "Chapter 3: ARM-TS Deep Dive"
 author: "Hamid Tavakoli, MD, MSc"
 output:
@@ -11,7 +11,7 @@ runtime: shiny_prerendered
 description: >
   Chapter 3 walks through every major ARM-TS object with full JSON examples and
   the equivalent annotated-shell annotation. You will dissect the running case
-  study — a safety AE summary by treatment arm — and build ARM-TS objects (an
+  study (a safety AE summary by treatment arm) and build ARM-TS objects (an
   AnalysisMethod, an Analysis) by hand from a shell annotation.
 ---
 
@@ -57,18 +57,19 @@ re_json <- jsonlite::read_json("data/reporting_event.json")
 ## Chapter 3: ARM-TS Deep Dive
 
 This chapter walks through every major ARM-TS object with full JSON examples. Each section
-includes the equivalent annotated-shell annotation so you can see exactly how your existing
-knowledge maps to the formal model.
+includes the equivalent annotated-shell annotation, so you can see exactly how your
+existing knowledge maps to the formal model. Nothing here is abstract theory; every object
+answers a question you already answer daily when you annotate a shell.
 
 The examples use a running case study: **a safety table showing adverse event summary
-statistics by treatment arm in the Safety Population** — a table type you have programmed many
-times.
+statistics by treatment arm in the Safety Population**. A table type you have programmed
+many times.
 
 ---
 
 ### 3.1 ReportingEvent
 
-The **root container**. Represents one reporting deliverable — typically one CSR or one
+The **root container**. Represents one reporting deliverable, typically one CSR or one
 interim analysis.
 
 **Key fields**
@@ -81,8 +82,9 @@ interim analysis.
 | `referenceDocuments` | No | External documents (SAP, programs) |
 | `analysisSets`, `dataSubsets`, `analysisGroupings`, `methods`, `analyses`, `outputs` | No | The object collections |
 
-**Annotated-shell equivalent.** The annotated-shell header block — study number, protocol
-title, SAP version, date. The `ReportingEvent` is the machine-readable version of that header.
+**Annotated-shell equivalent.** The annotated-shell header block: study number, protocol
+title, SAP version, date. The `ReportingEvent` is the machine-readable version of that
+header.
 
 ---
 
@@ -100,9 +102,9 @@ the SAP.
 }
 ```
 
-**Annotated-shell equivalent.** The *"per Section X.X of SAP"* text you write. In ARM-TS this
-becomes a formal `DocumentReference` (with optional `pageRefs`) inside the `Analysis` object,
-pointing to the `ReferenceDocument` you define here.
+**Annotated-shell equivalent.** The *"per Section X.X of SAP"* text you write. In ARM-TS
+this becomes a formal `DocumentReference` (with optional `pageRefs`) inside the `Analysis`
+object, pointing to the `ReferenceDocument` you define here.
 
 ---
 
@@ -142,11 +144,24 @@ become `AnalysisSet` objects.
 }
 ```
 
-Exactly one of `condition` or `compoundExpression` should be present.
+Exactly one of `condition` or `compoundExpression` should be present. Never both; that is
+a schema violation you will meet again in Section 3.12.
 
-**Annotated-shell equivalent.** *"SAFFL='Y' from ADSL"* or *"Safety Population"*. You define
-it **once** as `AS002`, and every analysis referencing the Safety Population just sets
-`"analysisSetId": "AS002"` — this is **Principle 1 (reuse)** in action.
+**Annotated-shell equivalent.** *"SAFFL='Y' from ADSL"* or *"Safety Population"*. You
+define it **once** as `AS002`, and every analysis referencing the Safety Population just
+sets the ID. This is **Principle 1 (reuse)** from Chapter 2 in action; here is what the
+reference side looks like in production:
+
+```json
+"analyses": [
+  { "id": "AN001", "name": "Age Summary",
+    "analysisSetId": "AS002", "...": "..." },
+  { "id": "AN007", "name": "AE Overview",
+    "analysisSetId": "AS002", "...": "..." }
+]
+```
+
+Two analyses, one definition. The condition text lives in exactly one place.
 
 ---
 
@@ -180,10 +195,10 @@ within those subjects' data**.
 
 ### 3.5 GroupingFactor and Group
 
-Defines how to subdivide the analysis. Treatment arm, sex, age group, visit — these are all
+Defines how to subdivide the analysis. Treatment arm, sex, age group, visit: these are all
 grouping factors.
 
-**GroupingFactor — key fields**
+**GroupingFactor key fields**
 
 | Field | Description |
 |-------|-------------|
@@ -209,7 +224,7 @@ grouping factors.
 }
 ```
 
-**Data-driven (visit)** — groups come from the data:
+**Data-driven (visit)**, where the groups come from the data at runtime:
 
 ```json
 {
@@ -221,6 +236,9 @@ grouping factors.
 }
 ```
 
+Notice that each pre-specified `Group` carries its own `condition`, with exactly the same
+structure as an AnalysisSet condition. Same WhereClause pattern, third context.
+
 **Annotated-shell equivalent.** The **column headers** in your tables. A table with columns
 "Drug XYZ 10mg" and "Placebo" reflects a `GroupingFactor` with two pre-specified `Groups`.
 Each stored `OperationResult` carries a `resultGroup` linking it back to `G001` or `G002`.
@@ -229,10 +247,11 @@ Each stored `OperationResult` carries a `resultGroup` linking it back to `G001` 
 
 ### 3.6 AnalysisMethod
 
-Defines one or more **statistical operations** that can be applied to any analysis variable.
-Methods are reusable across analyses.
+Defines one or more **statistical operations** that can be applied to any analysis
+variable. Methods are reusable across analyses: define the "continuous summary" once,
+reference it from the age analysis, the weight analysis, the baseline lab analysis.
 
-**Operations — key fields**
+**Operation key fields**
 
 | Field | Description |
 |-------|-------------|
@@ -259,6 +278,9 @@ Methods are reusable across analyses.
 
 **Count + percentage (uses ReferencedOperationRelationship)**
 
+A percentage is never a standalone number; it depends on a denominator. ARS makes that
+dependency explicit instead of leaving it implied:
+
 ```json
 {
   "id": "M002",
@@ -283,10 +305,11 @@ the `ReferencedOperationRelationship` with `DENOMINATOR` encodes where the N com
 
 ---
 
-### 3.7 Analysis — The Central Object
+### 3.7 Analysis: The Central Object
 
-Each `Analysis` ties together: a dataset, a variable, a population, optional data filter,
-optional grouping factors, and a method.
+Each `Analysis` ties together a dataset, a variable, a population, an optional data
+filter, optional grouping factors, and a method. If the model has a center of gravity,
+this is it.
 
 **Key fields**
 
@@ -301,9 +324,9 @@ optional grouping factors, and a method.
 | `purpose` | PRIMARY / SECONDARY / EXPLORATORY OUTCOME MEASURE |
 | `documentRefs` | SAP references (with optional page numbers) |
 | `programmingCode` | Code, or reference to a program file |
-| `results` | The ARD — `[OperationResult]` |
+| `results` | The ARD: `[OperationResult]` |
 
-**Shell row → ARM-TS Analysis field mapping**
+**Shell row to ARM-TS Analysis field, one to one:**
 
 | Annotated-shell annotation text | ARS field |
 |--------------------------------|-----------|
@@ -311,17 +334,17 @@ optional grouping factors, and a method.
 | "Safety Population (SAFFL='Y')" | `analysisSetId: "AS002"` |
 | "By treatment arm (TRT01A)" | `orderedGroupings: [{groupingId: "GF001", resultsByGroup: true}]` |
 | "n (%)" | `methodId: "M002"` |
-| "per Section 10.1 of SAP, pp. 42–44" | `documentRefs: [{referenceDocumentId: "SAP001", pageRefs: [...]}]` |
+| "per Section 10.1 of SAP, pp. 42-44" | `documentRefs: [{referenceDocumentId: "SAP001", pageRefs: [...]}]` |
 | "program: t_ae_summary.R" | `programmingCode.documentRef` |
 
 This six-row mapping is the whole game. Every annotated-shell row decomposes into these
-fields of one `Analysis` object.
+fields of one `Analysis` object. You will build one yourself in Exercise 3.4.
 
 ---
 
 ### 3.8 Output and OutputDisplay
 
-Defines the TFL — its file format, title, footnotes, and how analyses map into displays.
+Defines the TFL: its file format, title, footnotes, and how analyses map into displays.
 
 ```json
 {
@@ -347,17 +370,18 @@ Defines the TFL — its file format, title, footnotes, and how analyses map into
 }
 ```
 
-**Annotated-shell equivalent.** The **shell itself** — table number, title, footnotes,
-abbreviations — maps directly to `Output` and `OutputDisplay`. Your title cell =
-`displayTitle`. Your footnote cells = `DisplaySection` with `sectionType: "Footnote"`.
+**Annotated-shell equivalent.** The **shell itself**: table number, title, footnotes,
+abbreviations. All of it maps directly to `Output` and `OutputDisplay`. Your title cell
+becomes `displayTitle`. Your footnote cells become a `DisplaySection` with
+`sectionType: "Footnote"`.
 
 ---
 
 ### 3.9 AnalysisProgrammingCodeTemplate
 
-When a method is applied to many analyses with **minor variations** (e.g., different
-`PARAMCD` values), the `codeTemplate` mechanism lets you write the code once with replacement
-parameters.
+When a method is applied to many analyses with **minor variations** (for example,
+different `PARAMCD` values), the `codeTemplate` mechanism lets you write the code once
+with replacement parameters. Think of it as the ARS version of a parameterized SAS macro.
 
 ```json
 {
@@ -379,11 +403,12 @@ Individual analyses reference this template and supply their specific parameter 
 
 ---
 
-### 3.10 Naming Convention — Object IDs
+### 3.10 Naming Convention: Object IDs
 
 Every ARM-TS object has an `id`. The LDM says only that IDs must be **strings**
-and **unique within scope**; format is sponsor choice. But there is a strong
-industry convention worth adopting from day one.
+and **unique within scope**; the format is sponsor choice. But there is a strong
+industry convention worth adopting from day one, because everyone who reads your
+files will expect it.
 
 **Industry-standard prefix table** (used by the CDISC examples, by every
 published ARM-TS the author has seen, and by this tutorial throughout):
@@ -397,7 +422,7 @@ published ARM-TS the author has seen, and by this tutorial throughout):
 | `GroupingFactor` | `GF` | `GF001` (Treatment Arm) |
 | `Group` | `G` | `G001` (Drug A), `G002` (Placebo) |
 | `AnalysisMethod` | `M` | `M001` (continuous), `M002` (count + %) |
-| `Operation` | `O` | `O001` (n), `O002` (Mean), … `O008` (Pct) |
+| `Operation` | `O` | `O001` (n), `O002` (Mean), ... `O008` (Pct) |
 | `Analysis` | `AN` | `AN001`, `AN042` |
 | `Output` | `OUT` | `OUT001` |
 | `OutputDisplay` | `DISP` | `DISP001` |
@@ -407,9 +432,9 @@ published ARM-TS the author has seen, and by this tutorial throughout):
 
 **Two equally valid naming styles:**
 
-- **Style A — sequential code** (CDISC examples; dense, machine-friendly):
-  `AS001`, `AS002`, `M001`, `AN001` … `AN045`
-- **Style B — descriptive code** (longer, more readable in code review):
+- **Style A, sequential code** (CDISC examples; dense, machine-friendly):
+  `AS001`, `AS002`, `M001`, `AN001` ... `AN045`
+- **Style B, descriptive code** (longer, more readable in code review):
   `AS_ITT`, `AS_SAFETY`, `M_SUMM_CONT`, `AN_AGE_BY_TRT`
 
 Pick one for the whole `ReportingEvent` and stick with it. Mixing styles
@@ -417,12 +442,12 @@ within one file is the hardest pattern to review.
 
 **Validator checklist for IDs:**
 
-1. **Presence** — every required `id` is non-empty
-2. **Uniqueness** — no duplicates within scope
-3. **Resolution** — every `*Id` reference resolves to an existing object
-4. **Stability** — once published, do not rename IDs; bump
+1. **Presence**: every required `id` is non-empty
+2. **Uniqueness**: no duplicates within scope
+3. **Resolution**: every `*Id` reference resolves to an existing object
+4. **Stability**: once published, do not rename IDs; bump
    `ReportingEvent.version` instead
-5. **Characters** — stick to `[A-Za-z0-9_]`; no spaces, no hyphens
+5. **Characters**: stick to `[A-Za-z0-9_]`; no spaces, no hyphens
 
 > Full reference (per-class scope rules, anti-patterns, conventions for
 > SponsorTerm and TerminologyExtension IDs):
@@ -430,53 +455,54 @@ within one file is the hardest pattern to review.
 
 ---
 
-### 3.11 Naming Convention — `name`, `label`, `description`
+### 3.11 Naming Convention: `name`, `label`, `description`
 
-Most ARM-TS classes carry three text-content fields. They are not
-interchangeable.
+Most ARM-TS classes carry three text-content fields. They look interchangeable.
+They are not.
 
 | Field | Purpose | Typical length | Example |
 |-------|---------|----------------|---------|
-| `name` | Canonical human-readable name. Goes in the annotated shell, in tooling lookups, on output displays. | 3–60 chars | `"Safety Population"` |
-| `label` | Short display label for tight spaces (tooltips, column headers). | ≤ 30 chars | `"Safety Pop"` |
+| `name` | Canonical human-readable name. Goes in the annotated shell, in tooling lookups, on output displays. | 3 to 60 chars | `"Safety Population"` |
+| `label` | Short display label for tight spaces (tooltips, column headers). | 30 chars or fewer | `"Safety Pop"` |
 | `description` | Free-text explanation of intent / definition / nuance. | Sentence to paragraph | `"All subjects who received at least one dose of study drug (SAFFL='Y')"` |
 
 **Rules of thumb:**
 
 - `name` is **required on almost every class**. Omitting it is a schema violation.
 - `label` is optional but recommended when displays have width constraints.
-- `description` is optional but **highly recommended** for audit trail.
+- `description` is optional but **highly recommended** for the audit trail.
   Validators do not check it; reviewers absolutely do.
 - Use **Title Case** for `name` and `label`. Sentence case is fine for `description`.
 
 ---
 
-### 3.12 JSON Field Syntax — camelCase, References, Plurals
+### 3.12 JSON Field Syntax: camelCase, References, Plurals
 
-The ARS LDM uses LinkML serialized as JSON. Three rules apply universally.
+The ARS LDM uses LinkML serialized as JSON. Three rules apply universally, and they
+cover nearly every syntax error you will ever make in an ARM-TS file.
 
-**Rule 1 — camelCase field names.** Every field is `lowerCamelCase`. Class
+**Rule 1: camelCase field names.** Every field is `lowerCamelCase`. Class
 names (in documentation) are `UpperCamelCase` to distinguish.
 
 ```json
-"analysisSets":      [...]   ✅
-"AnalysisSets":      [...]   ❌ PascalCase
-"analysis_sets":     [...]   ❌ snake_case
-"analysissets":      [...]   ❌ no boundary
+"analysisSets":      [...]   OK
+"AnalysisSets":      [...]   WRONG: PascalCase
+"analysis_sets":     [...]   WRONG: snake_case
+"analysissets":      [...]   WRONG: no boundary
 ```
 
-**Rule 2 — Singular references end in `Id`; plural references end in `Ids`.**
+**Rule 2: singular references end in `Id`; plural references end in `Ids`.**
 
 ```json
-"analysisSetId":   "AS002"            ← single reference (string)
-"categoryIds":     ["C001", "C003"]   ← multi-reference (array of strings)
+"analysisSetId":   "AS002"            <- single reference (string)
+"categoryIds":     ["C001", "C003"]   <- multi-reference (array of strings)
 ```
 
 A field ending `Id` (string) is a single reference; a field ending `Ids`
-(array) is a list. **References use IDs, never nested objects** — this is
-how the standard enforces Principle 1 (Reuse over repetition).
+(array) is a list. **References use IDs, never nested objects.** This is
+how the standard enforces Principle 1 (reuse over repetition).
 
-**Rule 3 — Collections are plural; elements are singular classes.**
+**Rule 3: collections are plural; elements are singular classes.**
 
 ```json
 "analyses":    [Analysis, Analysis, ...]
@@ -486,7 +512,7 @@ how the standard enforces Principle 1 (Reuse over repetition).
 "results":     [OperationResult, ...]
 ```
 
-**Mutual-exclusion slot pairs** — exactly one of the two must be present,
+**Mutual-exclusion slot pairs.** Exactly one of the two must be present,
 never both:
 
 | Class | Mutually exclusive slots |
@@ -503,7 +529,7 @@ never both:
 ### 3.13 `resultPattern` Grammar
 
 `Operation.resultPattern` controls how `rawValue` becomes `formattedValue`.
-The LDM says only "the default pattern or format" — the **`X`-grammar**
+The LDM says only "the default pattern or format"; the **`X`-grammar**
 below is industry convention, used by every CDISC example and by `{cards}`
 / `{gtsummary}`.
 
@@ -514,7 +540,7 @@ below is industry convention, used by every CDISC example and by `{cards}`
 | `(`, `)`, `%`, `:` | Literal characters appearing as-is in the formatted value |
 
 **Counting rule:** the number of `X`s **after the decimal point** equals
-the number of decimal places.
+the number of decimal places. That single rule generates the whole table:
 
 | Pattern | Decimals | Example raw → formatted |
 |---------|----------|------------------------|
@@ -539,10 +565,11 @@ double, count the decimal `X`s, `sprintf("%.<n>f", value)`, and compare to
 ### 3.14 Controlled Terminology and Extensibility
 
 ARS has **closed enumerations** (fixed, not extensible) and **extensible
-enumerations** (CDISC values + sponsor extensions). All values are
-case-sensitive and must match verbatim.
+enumerations** (CDISC values plus sponsor extensions). All values are
+case-sensitive and must match verbatim. `"eq"` is not `EQ`, and
+`"specified in sap"` is not `SPECIFIED IN SAP`. Validators reject both.
 
-**Closed enumerations** — value goes directly in the slot:
+**Closed enumerations.** The value goes directly in the slot:
 
 | Enum | Values |
 |------|--------|
@@ -551,7 +578,7 @@ case-sensitive and must match verbatim.
 | `DisplaySectionTypeEnum` | `Title`, `Header`, `Rowlabel-Header`, `Body`, `Footnote`, `Abbreviation`, `Footer` |
 | `PageRefTypeEnum` | `PhysicalRef`, `NamedDestination` |
 
-**Extensible enumerations** — value goes in `controlledTerm` (CDISC value)
+**Extensible enumerations.** The value goes in `controlledTerm` (CDISC value)
 or `sponsorTermId` (sponsor extension):
 
 | Enum | CDISC values |
@@ -561,7 +588,7 @@ or `sponsorTermId` (sponsor extension):
 | `OperationRoleEnum` | `NUMERATOR`, `DENOMINATOR` |
 | `OutputFileTypeEnum` | `pdf`, `rtf`, `txt` |
 
-**Extending an enum** — add a `TerminologyExtension`:
+**Extending an enum.** Add a `TerminologyExtension`:
 
 ```json
 {
@@ -580,7 +607,7 @@ or `sponsorTermId` (sponsor extension):
 Then on the consuming class:
 
 ```json
-"reason": { "sponsorTermId": "ST001" }   ← instead of "controlledTerm"
+"reason": { "sponsorTermId": "ST001" }   <- instead of "controlledTerm"
 ```
 
 > Every value, anti-patterns ("eq" lowercase, "Mean" instead of `Mean`),
@@ -593,24 +620,51 @@ Then on the consuming class:
 
 ### What's in the sample `re_json`?
 
+Before building objects, look at what the sample already contains. The `sapply()` calls
+below loop over each collection and pull out a labelled summary (`sapply` applies a
+function to every element of a list and simplifies the result to a vector).
+
 ```{r ch3-preview, exercise=FALSE, echo=TRUE}
 # AnalysisSets defined in the sample
-sapply(re_json$analysisSets, function(x) paste0(x$id, " — ", x$name))
+sapply(re_json$analysisSets, function(x) paste0(x$id, " - ", x$name))
 ```
 
 ```{r ch3-preview-method, exercise=FALSE, echo=TRUE}
 # Operations within Method M001
 sapply(re_json$methods[[1]]$operations, function(o)
-  paste0(o$id, " — ", o$name, " (", o$resultPattern, ")"))
+  paste0(o$id, " - ", o$name, " (", o$resultPattern, ")"))
 ```
+
+Note the indexes: `AS001` is the ITT Population at position 1, `AS002` is the Safety
+Population at position 2. You will need that in Exercise 3.1.
 
 ---
 
-## Exercise 3.1 — Read an AnalysisSet WhereClause {data-progressive=FALSE}
+## Exercise 3.1: Read an AnalysisSet WhereClause {data-progressive=FALSE}
 
-Extract the Safety Population (`AS002`) from the sample ARM-TS and print its filter condition
-as a human-readable string of the form `"DATASET.VARIABLE COMPARATOR 'VALUE'"`. This is the
-core logic of `arsbridge::ars_to_shell()`.
+**Step 1: the annotated shell.** The target: the population text as a human writes it:
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:8px 14px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.3.1: Adverse Event Summary</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:4px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<div style="color:#777; font-family:sans-serif; font-size:0.85em; text-align:center;">↑ this subtitle line is what your code must reconstruct from the ARS WhereClause</div>
+</div>
+
+**Step 2: the ARM-TS encoding.** The same information as it sits in `re_json`:
+
+```json
+{ "id": "AS002", "name": "Safety Population",
+  "condition": { "dataset": "ADSL", "variable": "SAFFL",
+                 "comparator": "EQ", "value": ["Y"] } }
+```
+
+**Step 3: your turn.** Go from JSON back to shell text. Extract `AS002` from the sample
+ARM-TS and print its filter condition as `"DATASET.VARIABLE COMPARATOR 'VALUE'"`. This is
+the core logic of `arsbridge::ars_to_shell()`.
+
+One tool note: `glue::glue()` builds a string by evaluating whatever sits inside `{...}`
+and splicing the result in. So `glue("{as_safe$condition$dataset}.")` prints the dataset
+name followed by a literal dot.
 
 ```{r ch3-ex1, exercise=TRUE, exercise.lines=12}
 # Step 1: index into analysisSets for AS002 (Safety Population)
@@ -645,7 +699,7 @@ glue::glue(
 ```{r ch3-ex1-check}
 grade_result(
   pass_if(~ as.character(.result) == "ADSL.SAFFL EQ 'Y'",
-          "Correct — that's the Safety Population WhereClause as a human-readable string. arsbridge::ars_to_shell() does exactly this for every AnalysisSet, DataSubset, and Group in the ARM-TS."),
+          "Correct. That's the Safety Population WhereClause as a human-readable string. arsbridge::ars_to_shell() does exactly this for every AnalysisSet, DataSubset, and Group in the ARM-TS."),
   fail_if(~ TRUE,
           "The Safety Population is AS002 (index 2). Make sure you used $variable and $comparator inside the glue() string.")
 )
@@ -653,11 +707,64 @@ grade_result(
 
 ---
 
-## Exercise 3.2 — Build an AnalysisMethod by Hand {data-progressive=FALSE}
+## Exercise 3.2: Build an AnalysisMethod by Hand {data-progressive=FALSE}
 
-Create an R list representing the **"n, mean, SD, median, min, max"** continuous summary method.
-Follow the ARS object structure exactly — `id`, `name`, `operations`, and each operation has
-`id`, `name`, `order`, `resultPattern`.
+**Step 1: the annotated shell.** The statistics row of a demographics shell:
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.1.1: Demographic Characteristics</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left; width:44%;">Age (years) &nbsp;<span style="color:#b3400e; font-weight:normal; font-size:0.9em;">ADSL.AGE</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline High Dose</th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Placebo</th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center; color:#888; font-weight:normal;">Format</th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;n</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center; color:#b3400e;">XXX</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Mean (SD)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center; color:#b3400e;">XXX.X (XXX.XX)</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Median</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center; color:#b3400e;">XXX.X</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Min, Max</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx, xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx, xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center; color:#b3400e;">XXX, XXX</td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Grouping: <span style="color:#b3400e;">TRT01A</span> &nbsp;|&nbsp; Each statistic row = one ARS Operation with its own <span style="color:#b3400e;">resultPattern</span></div>
+</div>
+
+**Step 2: the ARM-TS encoding.** That row becomes `AnalysisMethod M001` with six ordered
+operations, exactly the JSON you saw in Section 3.6:
+
+```json
+{ "id": "M001", "name": "Summary Statistics - Continuous",
+  "operations": [
+    { "id": "O001", "name": "n",    "order": 1, "resultPattern": "XXX"   },
+    { "id": "O002", "name": "Mean", "order": 2, "resultPattern": "XXX.X" },
+    "..."
+  ] }
+```
+
+**Step 3: your turn.** Build the same structure as an R list. Follow the ARS object shape
+exactly: `id`, `name`, `operations`, and each operation has `id`, `name`, `order`,
+`resultPattern`. Remember the counting rule from Section 3.13: the `X`s after the decimal
+point set the number of decimal places.
 
 ```{r ch3-ex2, exercise=TRUE, exercise.lines=20}
 m_continuous <- list(
@@ -700,16 +807,42 @@ m_continuous <- list(
   )
 )
 length(m_continuous$operations)
-# 6 operations — this method can now be referenced by any Analysis
+# 6 operations. This method can now be referenced by any Analysis
 # that needs summary stats on a continuous variable.
 ```
 
 ---
 
-## Exercise 3.3 — Build a Group with a WhereClause {data-progressive=FALSE}
+## Exercise 3.3: Build a Group with a WhereClause {data-progressive=FALSE}
 
-You need a `Group` object representing **"Xanomeline High Dose"** within the Treatment Arm
-grouping factor. The group is defined by `ADSL.TRT01A == "Xanomeline High Dose"`.
+**Step 1: the annotated shell.** A single column header in your table:
+
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left; width:36%;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;"><strong>Xanomeline High Dose</strong><br><span style="color:#b3400e; font-size:0.85em; font-weight:normal;">ADSL.TRT01A='Xanomeline High Dose'</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center; color:#888;">...</th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px; color:#888; font-style:italic;" colspan="3">[analyses...]</td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">One column header = one ARS Group with a <span style="color:#b3400e;">condition</span> on <span style="color:#b3400e;">ADSL.TRT01A</span></div>
+</div>
+
+**Step 2: the ARM-TS encoding.** One column header = one `Group` inside the Treatment Arm
+GroupingFactor, defined by `ADSL.TRT01A == "Xanomeline High Dose"`:
+
+```json
+{ "id": "G001", "name": "Xanomeline High Dose",
+  "condition": { "dataset": "ADSL", "variable": "TRT01A",
+                 "comparator": "EQ", "value": ["Xanomeline High Dose"] } }
+```
+
+**Step 3: your turn.** Build the same object as an R list. Section 3.5 showed you the
+shape: a Group is `id` + `name` + `condition`, and the condition is a standard WhereClause
+(dataset, variable, comparator, value).
 
 ```{r ch3-ex3, exercise=TRUE, exercise.lines=15}
 g_high <- list(
@@ -744,14 +877,72 @@ str(g_high)
 
 ---
 
-## Exercise 3.4 — Capstone: Annotated Shell → Analysis Object {data-progressive=FALSE}
+## Exercise 3.4: Capstone, Annotated Shell to Analysis Object {data-progressive=FALSE}
 
-You are a lead programmer. Your annotated shell for Table 14.1.1 says:
+**Step 1: the annotated shell.** You are a lead programmer. Your annotated shell for
+Table 14.1.1 says:
 
-> *"n, mean, SD, median, min, max from ADSL.AGE, Safety Population (SAFFL='Y'), by treatment
-> arm (TRT01A), per SAP Section 8.1"*
+<div style="font-family:'Courier New',monospace; border:1px solid #aaa; background:#fff; padding:10px 16px; font-size:0.86em; line-height:1.5; margin-bottom:6px;">
+<div style="font-weight:bold; text-align:center;">Table 14.1.1: Demographic Characteristics</div>
+<div style="text-align:center; font-family:sans-serif; margin-bottom:8px;">Safety Population &nbsp;(<span style="color:#b3400e; font-weight:bold;">ADSL.SAFFL='Y'</span>)</div>
+<table style="border-collapse:collapse; width:100%;">
+<tr style="background:#f0f0f0;">
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:left; width:44%;"></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline High Dose<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Xanomeline Low Dose<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+  <th style="border:1px solid #bbb; padding:3px 10px; text-align:center;">Placebo<br><span style="font-weight:normal; font-size:0.88em; color:#555;">N=XXX</span></th>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">Age (years) &nbsp;<span style="color:#b3400e; font-weight:bold;">ADSL.AGE</span></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+  <td style="border:1px solid #bbb; padding:3px 10px;"></td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;n</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Mean (SD)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x (xxx.xx)</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Median</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx.x</td>
+</tr>
+<tr>
+  <td style="border:1px solid #bbb; padding:3px 10px;">&nbsp;&nbsp;Min, Max</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx, xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx, xxx</td>
+  <td style="border:1px solid #bbb; padding:3px 10px; text-align:center;">xxx, xxx</td>
+</tr>
+</table>
+<div style="color:#777; font-family:sans-serif; font-size:0.82em; margin-top:4px;">Grouping: <span style="color:#b3400e;">TRT01A</span> &nbsp;|&nbsp; Source: <span style="color:#b3400e;">ADSL.AGE</span> &nbsp;|&nbsp; SAP §8.1 (PRIMARY)</div>
+</div>
 
-Build the `Analysis` object that encodes this annotation.
+**Step 2: the ARM-TS target.** That row must become an `Analysis` of this shape, where
+every reference is an ID defined elsewhere in the ReportingEvent (`AS002` from Section
+3.3, `GF001` from 3.5, `M001` from 3.6):
+
+```json
+{ "id": "AN001",
+  "dataset": "...", "variable": "...",
+  "analysisSetId": "...",
+  "orderedGroupings": [ { "order": 1, "groupingId": "...", "resultsByGroup": true } ],
+  "methodId": "...",
+  "reason":  { "controlledTerm": "SPECIFIED IN SAP" },
+  "purpose": { "controlledTerm": "..." } }
+```
+
+**Step 3: your turn.** Build the `Analysis` object as an R list, filling every blank in
+the JSON sketch above. Every field was mapped in the Section 3.7 table; every ID follows
+the Section 3.10 conventions and appeared in the previews above.
 
 ```{r ch3-ex4, exercise=TRUE, exercise.lines=22}
 an_age <- list(
@@ -772,7 +963,7 @@ str(an_age)
 ```
 
 ```{r ch3-ex4-hint-1}
-# - It's a demographic baseline summary → PRIMARY OUTCOME MEASURE
+# - It's a demographic baseline summary -> PRIMARY OUTCOME MEASURE
 # - Source: ADSL.AGE
 # - Population: Safety = AS002
 # - Grouping: Treatment Arm = GF001
@@ -794,7 +985,7 @@ an_age <- list(
   methodId = "M001"
 )
 str(an_age)
-# One row of an annotated shell → one Analysis object.
+# One row of an annotated shell -> one Analysis object.
 # Field-by-field, the information content is identical.
 ```
 
@@ -805,7 +996,7 @@ grade_result(
             identical(.result$analysisSetId, "AS002") &&
             identical(.result$methodId, "M001") &&
             identical(.result$orderedGroupings[[1]]$groupingId, "GF001"),
-          "Correct — that's a complete ARM-TS Analysis object. This is the level of structure that arsbridge::shell_to_ars() will produce from your annotation text."),
+          "Correct. That's a complete ARM-TS Analysis object. This is the level of structure that arsbridge::shell_to_ars() will produce from your annotation text."),
   fail_if(~ TRUE,
           "Check: dataset='ADSL', variable='AGE', analysisSetId='AS002' (Safety), groupingId='GF001' (Treatment Arm), methodId='M001'.")
 )
@@ -813,12 +1004,16 @@ grade_result(
 
 ---
 
-## Exercise 3.5 — Validate ID-Prefix Conventions {data-progressive=FALSE}
+## Exercise 3.5: Validate ID-Prefix Conventions {data-progressive=FALSE}
 
-Section 3.10 introduced **Style A** prefix conventions: `AS` for AnalysisSet,
-`GF` for GroupingFactor, `M` for AnalysisMethod, `AN` for Analysis, `O` for
-Operation. The LDM does NOT enforce these — but our project (and the CDISC
-examples) does. Write a tiny validator that confirms `re_json` conforms.
+Section 3.10 introduced the **Style A** prefix conventions: `AS` for AnalysisSet, `GF` for
+GroupingFactor, `M` for AnalysisMethod, `AN` for Analysis, `O` for Operation. The LDM does
+NOT enforce these, but our project (and the CDISC examples) does. Write a tiny validator
+that confirms `re_json` conforms.
+
+Tools you need, both base R: `sapply()` (loop a function over a list, return a vector; you
+saw it in the previews) and `startsWith(x, prefix)` (returns `TRUE` where the string `x`
+begins with `prefix`). Wrapping the result in `all()` asks: did every ID pass?
 
 ```{r ch3-ex5, exercise=TRUE, exercise.lines=22}
 # Helper: do all items in a list have IDs starting with the given prefix?
@@ -840,10 +1035,10 @@ tibble::tribble(
 ```{r ch3-ex5-hint-1}
 # Each ARS object exposes its id as $id.
 # Expected prefixes:
-#   AnalysisSet     → "AS"
-#   GroupingFactor  → "GF"
-#   AnalysisMethod  → "M"
-#   Analysis        → "AN"
+#   AnalysisSet     -> "AS"
+#   GroupingFactor  -> "GF"
+#   AnalysisMethod  -> "M"
+#   Analysis        -> "AN"
 ```
 
 ```{r ch3-ex5-solution}
@@ -866,15 +1061,30 @@ tibble::tribble(
 
 ---
 
-## Exercise 3.6 — Resolve a `*Id` Reference {data-progressive=FALSE}
+## Exercise 3.6: Resolve a `*Id` Reference {data-progressive=FALSE}
 
-Section 3.12 introduced the `*Id` reference pattern. An `*Id` is only
-meaningful if the target object actually exists in the ReportingEvent —
-that's `validate_ard()` Check #3 (reference resolution). Build the lookup
-that powers it.
+Section 3.12 introduced the `*Id` reference pattern: define once, reference by ID. In
+production, that pattern is only safe if every reference actually resolves. Consider what
+you are checking:
 
-Given `Analysis AN001`, resolve its `analysisSetId` to the `AnalysisSet`
-object it refers to, and print the resolved population name.
+```json
+"analysisSets": [ { "id": "AS002", "name": "Safety Population", "...": "..." } ]
+
+"analyses":     [ { "id": "AN001", "analysisSetId": "AS002", "...": "..." } ]
+                                                     ^^^^^^
+                                        does this ID exist above?
+```
+
+An `*Id` is only meaningful if the target object exists in the ReportingEvent; checking
+that is `validate_ard()` Check #3 (reference resolution). Build the lookup that powers it.
+
+The pattern: `setNames(list, names)` attaches names to a list's elements, turning it into
+a dictionary you can index by ID. Build one for `analysisSets`, keyed by each set's `$id`,
+then look up the target with `[[target_id]]`. A `NULL` result means the reference is
+dangling.
+
+Given `Analysis AN001`, resolve its `analysisSetId` to the `AnalysisSet` object it refers
+to, and print the resolved population name.
 
 ```{r ch3-ex6, exercise=TRUE, exercise.lines=20}
 an <- re_json$analyses[[1]]
@@ -917,16 +1127,22 @@ if (is.null(resolved)) {
 }
 # "Reference AS002 resolves to AnalysisSet: Safety Population"
 # Run this same pattern over methodId, groupingId, groupId, operationId,
-# referenceDocumentId — and you have validate_ard() Check #3.
+# referenceDocumentId, and you have validate_ard() Check #3.
 ```
 
 ---
 
 ## Chapter 3 Knowledge Check
 
+Everything below was covered in Sections 3.1 through 3.14 and the exercises. Quick review
+map: document links (3.2), AnalysisSet vs DataSubset (3.3 and 3.4), grouping factors
+(3.5), resultPattern (3.13), operation relationships (3.6), code templates (3.9), ID
+conventions (3.10), field syntax and mutual exclusion (3.12), controlled terminology and
+case sensitivity (3.14).
+
 ```{r ch3-quiz, echo=FALSE}
 quiz(
-  caption = "Chapter 3 — Check Your Understanding",
+  caption = "Chapter 3: Check Your Understanding",
 
   question(
     "Where in ARM-TS is the link from an Analysis to a specific SAP section recorded?",
@@ -1017,7 +1233,7 @@ quiz(
   question(
     "In the sample re_json (and every example in this tutorial), 'AS' prefixes AnalysisSet IDs (AS001, AS002), 'M' prefixes Method IDs, 'AN' prefixes Analysis IDs. What does this convention represent?",
     answer(
-      "An industry convention used by the CDISC examples — NOT mandated by the ARS LDM",
+      "An industry convention used by the CDISC examples; NOT mandated by the ARS LDM",
       correct = TRUE
     ),
     answer("A strict requirement enforced by the ARS schema validator"),
@@ -1040,7 +1256,7 @@ quiz(
   question(
     "An AnalysisSet has BOTH a `condition` field AND a `compoundExpression` field populated in the same object. What is the correct behavior?",
     answer(
-      "Schema violation — exactly one of `condition` or `compoundExpression` must be present, never both",
+      "Schema violation; exactly one of `condition` or `compoundExpression` must be present, never both",
       correct = TRUE
     ),
     answer("Both are honored; condition is applied first, then the compoundExpression"),
@@ -1067,7 +1283,7 @@ quiz(
       correct = TRUE
     ),
     answer("controlledTerm must be a number, not a string"),
-    answer("Must use sponsorTermId instead — controlledTerm is for sponsor extensions"),
+    answer("Must use sponsorTermId instead; controlledTerm is for sponsor extensions"),
     answer("The value must be wrapped in an array"),
     allow_retry = TRUE,
     random_answer_order = TRUE
@@ -1090,24 +1306,24 @@ You have now seen every major ARM-TS object with:
 
 And the **rules and conventions** that make an ARM-TS file machine-validatable:
 
-- **Object ID conventions** (§3.10) — the Style A prefix system (`AS`, `GF`, `M`,
-  `AN`, …) used by CDISC examples; uniqueness, resolution, and stability rules
-- **`name` / `label` / `description` semantics** (§3.11) — what goes where, and why
-- **JSON field syntax** (§3.12) — camelCase universally, `*Id` for single references,
-  `*Ids` for multi-references, plural collections, mutual-exclusion slot pairs
-  (`condition` xor `compoundExpression`, `controlledTerm` xor `sponsorTermId`)
-- **`resultPattern` grammar** (§3.13) — the `X`-digit convention used by every CDISC
-  example, by `{cards}` / `{gtsummary}`, and by `arsbridge::validate_ard()` Check #5
-- **Controlled terminology** (§3.14) — every closed enum value verbatim, the four
+- **Object ID conventions** (Section 3.10): the Style A prefix system (`AS`, `GF`, `M`,
+  `AN`, ...) used by CDISC examples; uniqueness, resolution, and stability rules
+- **`name` / `label` / `description` semantics** (Section 3.11): what goes where, and why
+- **JSON field syntax** (Section 3.12): camelCase universally, `*Id` for single
+  references, `*Ids` for multi-references, plural collections, mutual-exclusion slot
+  pairs (`condition` xor `compoundExpression`, `controlledTerm` xor `sponsorTermId`)
+- **`resultPattern` grammar** (Section 3.13): the `X`-digit convention used by every
+  CDISC example, by `{cards}` / `{gtsummary}`, and by `arsbridge::validate_ard()` Check #5
+- **Controlled terminology** (Section 3.14): every closed enum value verbatim, the four
   extensible enums, and the `TerminologyExtension` / `SponsorTerm` extension pattern
 
 You also prototyped two of the validation checks `arsbridge::validate_ard()`
 will perform: prefix-convention lint (Exercise 3.5) and `*Id` reference
 resolution (Exercise 3.6).
 
-**The key insight:** everything in an annotated shell has an ARM-TS equivalent. The information
-content is identical; the representation is **machine-readable JSON vs. human-readable
-annotation text**.
+**The key insight:** everything in an annotated shell has an ARM-TS equivalent. The
+information content is identical; only the representation differs. Machine-readable JSON
+on one side, human-readable annotation text on the other.
 
-**Next:** Chapter 4 — ARD Deep Dive (what goes inside `Analysis.results` when analyses are
-actually run, and how `{cards}` generates flat ARD data frames from ADaM data)
+**Next:** Chapter 4, the ARD Deep Dive: what goes inside `Analysis.results` when analyses
+are actually run, and how `{cards}` generates flat ARD data frames from ADaM data
