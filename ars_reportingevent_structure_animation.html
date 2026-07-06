@@ -704,4 +704,17 @@ function reset() {
   steps.forEach(s => {
     const branchEl = document.getElementById('branch-' + s.branchKey);
     if (branchEl) {
-      branchEl.innerHTML = `<span class="
+      branchEl.innerHTML = `<span class="jkey">"${s.branchKey}"</span>: <span class="jph">[ ]</span>` +
+        (s.branchKey === 'outputs' ? '' : ',');
+      branchEl.classList.remove('branch-flash');
+    }
+  });
+  const scroll = document.querySelector('.json-scroll');
+  if (scroll) scroll.scrollTop = 0;
+  updateStepLabel();
+}
+
+updateStepLabel();
+</script>
+</body>
+</html>

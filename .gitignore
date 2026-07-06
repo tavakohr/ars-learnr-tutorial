@@ -8,6 +8,10 @@ materials/BUILD_INSTRUCTIONS_learnr_tutorial.md
 *_files/
 *_cache/
 
+# Standalone interactive animations — keep these tracked (self-contained, no build step)
+!ars_reportingevent_structure_animation.html
+!demog_to_ard_animation.html
+
 # R session / RStudio
 .Rproj.user/
 .Rhistory
