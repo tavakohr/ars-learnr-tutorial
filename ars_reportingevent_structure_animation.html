@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReportingEvent → ARS JSON Structure</title>
+<style>
+  :root {
+    --teal: #0d9488;   --teal-light: #ccfbf1;
+    --amber: #d97706;  --amber-light: #fef3c7;
+    --purple: #7c3aed; --purple-light: #ede9fe;
+    --blue: #2563a8;   --blue-light: #dbeafe;
+    --green: #16a34a;  --green-light: #dcfce7;
+    --red: #dc2626;    --red-light: #fee2e2;
+    --gray: #6b7280;   --gray-border: #e5e7eb;
+    --text: #111827;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f172a;
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+  }
+
+  h1 {
+    color: white;
+    font-size: 1.4rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin-bottom: 4px;
+    text-align: center;
+  }
+
+  .subtitle {
+    color: #94a3b8;
+    font-size: 0.82rem;
+    margin-bottom: 18px;
+    text-align: center;
+    max-width: 700px;
+  }
+
+  /* ── Controls ── */
+  .controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 18px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  button {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  #btnPlay  { background: #2563a8; color: white; }
+  #btnPlay:hover  { background: #1d4ed8; }
+  #btnStep  { background: #374151; color: white; }
+  #btnStep:hover  { background: #4b5563; }
+  #btnReset { background: #1f2937; color: #94a3b8; border: 1px solid #374151; }
+  #btnReset:hover { background: #374151; }
+
+  .step-indicator {
+    color: #94a3b8;
+    font-size: 0.8rem;
+    min-width: 80px;
+    text-align: center;
+  }
+
+  /* ── Main canvas ── */
+  .canvas {
+    position: relative;
+    width: 100%;
+    max-width: 1300px;
+    display: grid;
+    grid-template-columns: 0.9fr 1.1fr;
+    gap: 16px;
+  }
+
+  @media (max-width: 900px) {
+    .canvas { grid-template-columns: 1fr; }
+  }
+
+  /* ── Panel shared ── */
+  .panel {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.35);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel-header {
+    padding: 10px 16px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .shell-panel .panel-header { background: #1a3a5c; color: white; }
+  .json-panel  .panel-header { background: #0f2e28; color: #86efac; }
+
+  /* ── Annotated shell mock ── */
+  .shell-body { padding: 14px 16px; font-size: 0.82rem; }
+
+  .shell-title {
+    font-weight: 700;
+    text-align: center;
+    padding: 6px 8px;
+    border-radius: 5px;
+    transition: background 0.3s, outline 0.3s;
+    margin-bottom: 6px;
+  }
+
+  .shell-callout {
+    font-family: 'Courier New', monospace;
+    font-size: 0.72rem;
+    text-align: center;
+    color: #555;
+    padding: 4px 6px;
+    border-radius: 5px;
+    margin-bottom: 4px;
+    transition: background 0.3s, outline 0.3s;
+  }
+
+  .shell-callout .mono, .shell-method .mono, .shell-footer .mono {
+    color: #b3400e;
+    font-weight: 700;
+  }
+
+  .shell-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.72rem;
+    margin: 8px 0;
+  }
+
+  .shell-table th, .shell-table td {
+    border: 1px solid #ccc;
+    padding: 4px 6px;
+    text-align: center;
+  }
+
+  .shell-table th { background: #f0f0f0; font-weight: 600; }
+  .shell-table td:first-child, .shell-table th:first-child { text-align: left; }
+
+  .n-sub { font-weight: 400; font-size: 0.85em; color: #666; }
+
+  .shell-grouplabel {
+    font-weight: 400 !important;
+    font-size: 0.75rem;
+    color: #555;
+    background: white !important;
+  }
+
+  tr, td, div.shell-title, div.shell-callout {
+    transition: background 0.35s, outline 0.35s;
+  }
+
+  .shell-method, .shell-footer {
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 0.74rem;
+    color: #777;
+    padding: 5px 6px;
+    border-radius: 5px;
+    margin-top: 4px;
+  }
+
+  .shell-highlight {
+    background: #fef9c3 !important;
+    outline: 2px solid #f59e0b;
+    outline-offset: -2px;
+  }
+
+  /* ── ReportingEvent JSON panel ── */
+  .json-scroll {
+    overflow: auto;
+    max-height: 560px;
+  }
+
+  .json-code {
+    font-family: 'Courier New', monospace;
+    font-size: 0.68rem;
+    line-height: 1.6;
+    padding: 12px 16px;
+    color: #374151;
+    white-space: pre;
+  }
+
+  .ji  { padding-left: 16px; }
+  .ji2 { padding-left: 32px; }
+  .ji3 { padding-left: 48px; }
+  .ji4 { padding-left: 64px; }
+
+  .jkey  { color: #1e293b; font-weight: 600; }
+  .jstr  { color: #374151; }
+  .jref  {
+    border-bottom: 1px dotted #9ca3af;
+    font-style: italic;
+    cursor: help;
+  }
+  .jph { color: #cbd5e1; font-style: italic; }
+
+  .json-branch { transition: background 0.5s; border-radius: 4px; }
+
+  .json-branch.b-as > .jkey  { color: var(--teal); }
+  .json-branch.b-ds > .jkey  { color: var(--amber); }
+  .json-branch.b-ag > .jkey  { color: var(--purple); }
+  .json-branch.b-m  > .jkey  { color: var(--blue); }
+  .json-branch.b-an > .jkey  { color: var(--green); }
+  .json-branch.b-out> .jkey  { color: var(--red); }
+
+  .branch-filled { border-left: 3px solid transparent; padding-left: 6px; margin-left: -9px; }
+  .b-as  .branch-filled, .b-as.branch-filled  { border-left-color: var(--teal); }
+  .b-ds  .branch-filled, .b-ds.branch-filled  { border-left-color: var(--amber); }
+  .b-ag  .branch-filled, .b-ag.branch-filled  { border-left-color: var(--purple); }
+  .b-m   .branch-filled, .b-m.branch-filled   { border-left-color: var(--blue); }
+  .b-an  .branch-filled, .b-an.branch-filled  { border-left-color: var(--green); }
+  .b-out .branch-filled, .b-out.branch-filled { border-left-color: var(--red); }
+
+  .branch-flash { background: #fef9c3 !important; }
+
+  .json-footnote {
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 0.68rem;
+    color: #9ca3af;
+    padding: 8px 16px 12px;
+    border-top: 1px solid #f1f5f9;
+    font-style: italic;
+  }
+
+  /* ── Flying particle ── */
+  .flying-tag {
+    position: fixed;
+    background: #fef3c7;
+    border: 2px solid #f59e0b;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 0.75rem;
+    font-family: 'Courier New', monospace;
+    font-weight: 700;
+    color: #92400e;
+    z-index: 9999;
+    pointer-events: none;
+    box-shadow: 0 4px 16px rgba(245,158,11,0.4);
+    transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+    opacity: 1;
+  }
+
+  .flying-tag.fade-out {
+    opacity: 0;
+    transition: opacity 0.3s ease-in;
+  }
+
+  /* ── Legend ── */
+  .legend {
+    width: 100%;
+    max-width: 1300px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+    justify-content: center;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.72rem;
+    color: #94a3b8;
+  }
+
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ── Annotation box ── */
+  .annotation {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-left: 4px solid #2563a8;
+    border-radius: 8px;
+    padding: 10px 18px;
+    color: #e2e8f0;
+    font-size: 0.8rem;
+    max-width: 620px;
+    text-align: center;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.4s;
+    pointer-events: none;
+    line-height: 1.5;
+  }
+
+  .annotation.visible { opacity: 1; }
+  .annotation .hl { color: #fbbf24; font-family: 'Courier New', monospace; }
+
+  /* ── Progress bar ── */
+  .progress-bar-wrap {
+    width: 100%;
+    max-width: 1300px;
+    height: 4px;
+    background: #1e293b;
+    border-radius: 2px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #2563a8, #7c3aed);
+    border-radius: 2px;
+    transition: width 0.4s ease;
+    width: 0%;
+  }
+</style>
+</head>
+<body>
+
+<h1>ReportingEvent → ARS JSON Structure</h1>
+<p class="subtitle">CDISC Analysis Results Standard (ARS) · How one annotated shell decomposes into the six ReportingEvent branches</p>
+
+<div class="progress-bar-wrap">
+  <div class="progress-bar-fill" id="progressFill"></div>
+</div>
+
+<div class="controls">
+  <button id="btnReset" onclick="reset()">↺ Reset</button>
+  <button id="btnStep"  onclick="stepForward()">Step →</button>
+  <button id="btnPlay"  onclick="togglePlay()">▶ Play All</button>
+  <div class="step-indicator" id="stepLabel">Step 0 / 0</div>
+</div>
+
+<div class="canvas" id="mainCanvas">
+
+  <!-- LEFT: Annotated shell -->
+  <div class="panel shell-panel">
+    <div class="panel-header">📄 Annotated Shell — Table 14.1.1</div>
+    <div class="shell-body">
+      <div class="shell-title" id="shell-title">Table 14.1.1: Demographic Characteristics</div>
+      <div class="shell-callout" id="shell-population">Population: Safety Population <span class="mono">(ADSL.SAFFL = 'Y')</span></div>
+      <div class="shell-callout" id="shell-subset">Subset: Randomized Subjects <span class="mono">(ADSL.RANDFL = 'Y')</span></div>
+
+      <table class="shell-table">
+        <thead>
+          <tr id="shell-groupcols">
+            <th></th>
+            <th>Xanomeline High Dose<br><span class="n-sub">N=XXX</span></th>
+            <th>Xanomeline Low Dose<br><span class="n-sub">N=XXX</span></th>
+            <th>Placebo<br><span class="n-sub">N=XXX</span></th>
+          </tr>
+          <tr><th colspan="4" class="shell-grouplabel">Grouping: <span class="mono">TRT01A</span></th></tr>
+        </thead>
+        <tbody>
+          <tr id="shell-variable"><td colspan="4" style="text-align:left"><strong>Age (years)</strong> <span class="mono">ADSL.AGE</span></td></tr>
+          <tr><td>n</td><td>xxx</td><td>xxx</td><td>xxx</td></tr>
+          <tr id="shell-cell-value"><td>Mean (SD)</td><td>xxx.x (xx.xx)</td><td>xxx.x (xx.xx)</td><td>xxx.x (xx.xx)</td></tr>
+          <tr><td>Median</td><td>xxx.x</td><td>xxx.x</td><td>xxx.x</td></tr>
+        </tbody>
+      </table>
+      <div class="shell-callout" style="margin-top:-2px;">Format: XXX.X (Mean)  |  rawValue <span class="mono">xx.xxxxx</span> → formattedValue <span class="mono">xx.x</span></div>
+
+      <div class="shell-method" id="shell-method">Method: n / Mean / SD / Median <span class="mono">(M001)</span></div>
+      <div class="shell-footer" id="shell-footer">Per SAP §8.1 — <span class="mono">PRIMARY, SPECIFIED IN SAP</span></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: ReportingEvent JSON -->
+  <div class="panel json-panel">
+    <div class="panel-header">🌳 ReportingEvent (ARS JSON)</div>
+    <div class="json-scroll">
+      <div class="json-code">
+<div>{</div>
+<div class="ji"><span class="jkey">"id"</span>: <span class="jstr">"RE001"</span>,</div>
+<div class="ji"><span class="jkey">"name"</span>: <span class="jstr">"CDISC Pilot Study CSR"</span>,</div>
+<div class="ji json-branch b-as"  id="branch-analysisSets"><span class="jkey">"analysisSets"</span>: <span class="jph">[ ]</span>,</div>
+<div class="ji json-branch b-ds"  id="branch-dataSubsets"><span class="jkey">"dataSubsets"</span>: <span class="jph">[ ]</span>,</div>
+<div class="ji json-branch b-ag"  id="branch-analysisGroupings"><span class="jkey">"analysisGroupings"</span>: <span class="jph">[ ]</span>,</div>
+<div class="ji json-branch b-m"   id="branch-methods"><span class="jkey">"methods"</span>: <span class="jph">[ ]</span>,</div>
+<div class="ji json-branch b-an"  id="branch-analyses"><span class="jkey">"analyses"</span>: <span class="jph">[ ]</span>,</div>
+<div class="ji json-branch b-out" id="branch-outputs"><span class="jkey">"outputs"</span>: <span class="jph">[ ]</span></div>
+<div>}</div>
+      </div>
+      <div class="json-footnote">Simplified for teaching — real ARM-TS JSON also includes ReferenceDocuments, TerminologyExtension, ListOfContents, and full DisplaySection detail (see CDISC ARS spec).</div>
+    </div>
+  </div>
+
+</div><!-- canvas -->
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#0d9488"></div>AnalysisSets (who)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#d97706"></div>DataSubsets (which records)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#7c3aed"></div>AnalysisGroupings (split by)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#2563a8"></div>Methods (how)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#16a34a"></div>Analyses + results/ARD</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#dc2626"></div>Outputs (the display)</div>
+</div>
+
+<div class="annotation" id="annotation"></div>
+
+<script>
+// ── Step definitions ─────────────────────────────────────────────────
+// Each step highlights the annotated-shell phrase that motivates one
+// ReportingEvent branch, flies a tag to the JSON panel, then fills that
+// branch's placeholder with real (illustrative) ARS JSON content.
+
+const steps = [
+  {
+    branchKey: 'analysisSets',
+    accent: 'b-as',
+    highlight: ['shell-population'],
+    label: 'AS002',
+    annotation: '<span class="hl">AnalysisSet</span> filters SUBJECTS — evaluated against ADSL. "Safety Population" becomes one entry in <span class="hl">analysisSets[]</span>, with its filter logic captured as a WhereClause <span class="hl">condition</span>.',
+    filled:
+      '<span class="jph">[</span>' +
+      '<div class="ji2 branch-filled">{</div>' +
+      '<div class="ji3"><span class="jkey">"id"</span>: <span class="jstr">"AS002"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"name"</span>: <span class="jstr">"Safety Population"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"condition"</span>: {</div>' +
+      '<div class="ji4"><span class="jkey">"dataset"</span>: <span class="jstr">"ADSL"</span>,</div>' +
+      '<div class="ji4"><span class="jkey">"variable"</span>: <span class="jstr">"SAFFL"</span>,</div>' +
+      '<div class="ji4"><span class="jkey">"comparator"</span>: <span class="jstr">"EQ"</span>,</div>' +
+      '<div class="ji4"><span class="jkey">"value"</span>: [<span class="jstr">"Y"</span>]</div>' +
+      '<div class="ji3">}</div>' +
+      '<div class="ji2">}</div>' +
+      '<span class="jph">]</span>,'
+  },
+  {
+    branchKey: 'dataSubsets',
+    accent: 'b-ds',
+    highlight: ['shell-subset'],
+    label: 'DS001',
+    annotation: '<span class="hl">DataSubset</span> filters DATA RECORDS, not subjects — a subject can pass the AnalysisSet above and still be excluded here. "Randomized Subjects" → <span class="hl">dataSubsets[]</span>.',
+    filled:
+      '<span class="jph">[</span>' +
+      '<div class="ji2 branch-filled">{</div>' +
+      '<div class="ji3"><span class="jkey">"id"</span>: <span class="jstr">"DS001"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"name"</span>: <span class="jstr">"Randomized Subjects"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"condition"</span>: {</div>' +
+      '<div class="ji4"><span class="jkey">"dataset"</span>: <span class="jstr">"ADSL"</span>,</div>' +
+      '<div class="ji4"><span class="jkey">"variable"</span>: <span class="jstr">"RANDFL"</span>,</div>' +
+      '<div class="ji4"><span class="jkey">"comparator"</span>: <span class="jstr">"EQ"</span>,</div>' +
+      '<div class="ji4"><span class="jkey">"value"</span>: [<span class="jstr">"Y"</span>]</div>' +
+      '<div class="ji3">}</div>' +
+      '<div class="ji2">}</div>' +
+      '<span class="jph">]</span>,'
+  },
+  {
+    branchKey: 'analysisGroupings',
+    accent: 'b-ag',
+    highlight: ['shell-groupcols'],
+    label: 'GF001',
+    annotation: '<span class="hl">AnalysisGrouping</span> → one <span class="hl">GroupingFactor</span> ("Treatment" / TRT01A) containing three <span class="hl">Group</span>s — each with its own WhereClause. Column headers become groups.groups[].',
+    filled:
+      '<span class="jph">[</span>' +
+      '<div class="ji2 branch-filled">{</div>' +
+      '<div class="ji3"><span class="jkey">"id"</span>: <span class="jstr">"GF001"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"name"</span>: <span class="jstr">"Treatment"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"groupingVariable"</span>: <span class="jstr">"TRT01A"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"groups"</span>: [</div>' +
+      '<div class="ji4">{ <span class="jkey">"id"</span>: <span class="jstr">"G001"</span>, <span class="jkey">"name"</span>: <span class="jstr">"Xanomeline High Dose"</span> },</div>' +
+      '<div class="ji4">{ <span class="jkey">"id"</span>: <span class="jstr">"G002"</span>, <span class="jkey">"name"</span>: <span class="jstr">"Xanomeline Low Dose"</span> },</div>' +
+      '<div class="ji4">{ <span class="jkey">"id"</span>: <span class="jstr">"G003"</span>, <span class="jkey">"name"</span>: <span class="jstr">"Placebo"</span> }</div>' +
+      '<div class="ji3">]</div>' +
+      '<div class="ji2">}</div>' +
+      '<span class="jph">]</span>,'
+  },
+  {
+    branchKey: 'methods',
+    accent: 'b-m',
+    highlight: ['shell-method'],
+    label: 'M001',
+    annotation: '<span class="hl">AnalysisMethod</span> — a reusable named set of <span class="hl">Operation</span>s. "n / Mean / SD / Median" → four Operations, each with its own <span class="hl">resultPattern</span> (display format).',
+    filled:
+      '<span class="jph">[</span>' +
+      '<div class="ji2 branch-filled">{</div>' +
+      '<div class="ji3"><span class="jkey">"id"</span>: <span class="jstr">"M001"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"name"</span>: <span class="jstr">"Descriptive Statistics"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"operations"</span>: [</div>' +
+      '<div class="ji4">{ <span class="jkey">"id"</span>: <span class="jstr">"O001"</span>, <span class="jkey">"name"</span>: <span class="jstr">"n"</span>,      <span class="jkey">"resultPattern"</span>: <span class="jstr">"XXX"</span> },</div>' +
+      '<div class="ji4">{ <span class="jkey">"id"</span>: <span class="jstr">"O002"</span>, <span class="jkey">"name"</span>: <span class="jstr">"Mean"</span>,   <span class="jkey">"resultPattern"</span>: <span class="jstr">"XXX.X"</span> },</div>' +
+      '<div class="ji4">{ <span class="jkey">"id"</span>: <span class="jstr">"O003"</span>, <span class="jkey">"name"</span>: <span class="jstr">"SD"</span>,     <span class="jkey">"resultPattern"</span>: <span class="jstr">"XXX.XX"</span> },</div>' +
+      '<div class="ji4">{ <span class="jkey">"id"</span>: <span class="jstr">"O004"</span>, <span class="jkey">"name"</span>: <span class="jstr">"Median"</span>, <span class="jkey">"resultPattern"</span>: <span class="jstr">"XXX.X"</span> }</div>' +
+      '<div class="ji3">]</div>' +
+      '<div class="ji2">}</div>' +
+      '<span class="jph">]</span>,'
+  },
+  {
+    branchKey: 'analyses',
+    accent: 'b-an',
+    highlight: ['shell-variable', 'shell-cell-value', 'shell-footer'],
+    label: 'AN001',
+    annotation: '<span class="hl">Analysis</span> ties dataset+variable to the population/subset/grouping/method — always by <span class="hl">ID reference</span>, never a copy. Its <span class="hl">results[]</span> array is where the ARD will live: each OperationResult reserves a slot for <span class="hl">rawValue</span> + <span class="hl">formattedValue</span>, filled in only once the analysis is actually run.',
+    filled:
+      '<span class="jph">[</span>' +
+      '<div class="ji2 branch-filled">{</div>' +
+      '<div class="ji3"><span class="jkey">"id"</span>: <span class="jstr">"AN001"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"dataset"</span>: <span class="jstr">"ADSL"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"variable"</span>: <span class="jstr">"AGE"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"analysisSetId"</span>: <span class="jref" title="→ references AnalysisSet AS002 defined above">"AS002"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"dataSubsetId"</span>: <span class="jref" title="→ references DataSubset DS001 defined above">"DS001"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"orderedGroupings"</span>: [ { <span class="jkey">"groupingId"</span>: <span class="jref" title="→ references GroupingFactor GF001">"GF001"</span> } ],</div>' +
+      '<div class="ji3"><span class="jkey">"methodId"</span>: <span class="jref" title="→ references AnalysisMethod M001">"M001"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"reason"</span>:  { <span class="jkey">"controlledTerm"</span>: <span class="jstr">"SPECIFIED IN SAP"</span> },</div>' +
+      '<div class="ji3"><span class="jkey">"purpose"</span>: { <span class="jkey">"controlledTerm"</span>: <span class="jstr">"PRIMARY OUTCOME MEASURE"</span> },</div>' +
+      '<div class="ji3"><span class="jkey">"results"</span>: [</div>' +
+      '<div class="ji4">{</div>' +
+      '<div class="ji4">&nbsp;&nbsp;<span class="jkey">"operationId"</span>: <span class="jref" title="→ references Operation O001 (n)">"O001"</span>,</div>' +
+      '<div class="ji4">&nbsp;&nbsp;<span class="jkey">"resultGroups"</span>: [ { <span class="jkey">"groupingId"</span>: <span class="jstr">"GF001"</span>, <span class="jkey">"groupId"</span>: <span class="jstr">"G001"</span> } ],</div>' +
+      '<div class="ji4">&nbsp;&nbsp;<span class="jkey">"rawValue"</span>: <span class="jph">"xxx"</span>, <span class="jkey">"formattedValue"</span>: <span class="jph">"xxx"</span></div>' +
+      '<div class="ji4">},</div>' +
+      '<div class="ji4">{</div>' +
+      '<div class="ji4">&nbsp;&nbsp;<span class="jkey">"operationId"</span>: <span class="jref" title="→ references Operation O002 (Mean)">"O002"</span>,</div>' +
+      '<div class="ji4">&nbsp;&nbsp;<span class="jkey">"resultGroups"</span>: [ { <span class="jkey">"groupingId"</span>: <span class="jstr">"GF001"</span>, <span class="jkey">"groupId"</span>: <span class="jstr">"G001"</span> } ],</div>' +
+      '<div class="ji4">&nbsp;&nbsp;<span class="jkey">"rawValue"</span>: <span class="jph">"xx.xxxxx"</span>, <span class="jkey">"formattedValue"</span>: <span class="jph">"xx.x"</span></div>' +
+      '<div class="ji4">}</div>' +
+      '<div class="ji3">]</div>' +
+      '<div class="ji2">}</div>' +
+      '<span class="jph">]</span>,'
+  },
+  {
+    branchKey: 'outputs',
+    accent: 'b-out',
+    highlight: ['shell-title'],
+    label: 'OUT001',
+    annotation: '<span class="hl">Output</span> — the table itself: title, footnotes, file spec. It is the only branch that points back at an Analysis (via ListOfContents), closing the loop from spec → result → display.',
+    filled:
+      '<span class="jph">[</span>' +
+      '<div class="ji2 branch-filled">{</div>' +
+      '<div class="ji3"><span class="jkey">"id"</span>: <span class="jstr">"OUT001"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"name"</span>: <span class="jstr">"Table 14.1.1"</span>,</div>' +
+      '<div class="ji3"><span class="jkey">"displays"</span>: [</div>' +
+      '<div class="ji4">{</div>' +
+      '<div class="ji4">&nbsp;&nbsp;<span class="jkey">"displayTitle"</span>: <span class="jstr">"Demographic Characteristics"</span>,</div>' +
+      '<div class="ji4">&nbsp;&nbsp;<span class="jkey">"displaySections"</span>: [ { <span class="jkey">"sectionType"</span>: <span class="jstr">"footnote"</span>, <span class="jkey">"text"</span>: <span class="jstr">"Per SAP Section 8.1"</span> } ]</div>' +
+      '<div class="ji4">}</div>' +
+      '<div class="ji3">]</div>' +
+      '<div class="ji2">}</div>' +
+      '<span class="jph">]</span>'
+  }
+];
+
+let currentStep = 0;
+let playing = false;
+let playTimer = null;
+
+const annotation = document.getElementById('annotation');
+const stepLabel = document.getElementById('stepLabel');
+const progressFill = document.getElementById('progressFill');
+
+function updateStepLabel() {
+  stepLabel.textContent = `Step ${currentStep} / ${steps.length}`;
+  progressFill.style.width = `${(currentStep / steps.length) * 100}%`;
+}
+
+function clearHighlights() {
+  document.querySelectorAll('.shell-highlight').forEach(el => el.classList.remove('shell-highlight'));
+}
+
+function showAnnotation(html) {
+  annotation.innerHTML = html;
+  annotation.classList.add('visible');
+}
+
+function hideAnnotation() {
+  annotation.classList.remove('visible');
+}
+
+function animateFly(sourceElId, label, callback) {
+  const sourceEl = document.getElementById(sourceElId);
+  if (!sourceEl) { callback && callback(); return; }
+
+  const srcRect = sourceEl.getBoundingClientRect();
+
+  const tag = document.createElement('div');
+  tag.className = 'flying-tag';
+  tag.textContent = label;
+  document.body.appendChild(tag);
+
+  tag.style.left = srcRect.left + 'px';
+  tag.style.top  = srcRect.top  + 'px';
+  tag.style.width = Math.max(srcRect.width, 60) + 'px';
+  tag.style.textAlign = 'center';
+
+  tag.getBoundingClientRect(); // force reflow
+
+  setTimeout(() => {
+    const jsonScroll = document.querySelector('.json-scroll');
+    const jsonRect = jsonScroll.getBoundingClientRect();
+    const destX = jsonRect.left + jsonRect.width / 2 - 30;
+    const destY = jsonRect.top  + 60;
+
+    tag.style.left = destX + 'px';
+    tag.style.top  = destY + 'px';
+    tag.style.transform = 'scale(0.85)';
+
+    setTimeout(() => {
+      tag.classList.add('fade-out');
+      setTimeout(() => {
+        tag.remove();
+        callback && callback();
+      }, 350);
+    }, 500);
+  }, 60);
+}
+
+function fillBranch(s) {
+  const branchEl = document.getElementById('branch-' + s.branchKey);
+  if (!branchEl) return;
+
+  branchEl.innerHTML = `<span class="jkey">"${s.branchKey}"</span>: ` + s.filled;
+  branchEl.classList.add('branch-flash');
+
+  const scroll = document.querySelector('.json-scroll');
+  scroll.scrollTop = branchEl.offsetTop - 40;
+
+  setTimeout(() => branchEl.classList.remove('branch-flash'), 900);
+}
+
+function runStep(idx) {
+  if (idx >= steps.length) {
+    stopPlay();
+    return;
+  }
+
+  const s = steps[idx];
+
+  clearHighlights();
+  s.highlight.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('shell-highlight');
+  });
+
+  showAnnotation(s.annotation);
+
+  animateFly(s.highlight[0], s.label, () => {
+    fillBranch(s);
+  });
+}
+
+function stepForward() {
+  if (currentStep >= steps.length) return;
+  runStep(currentStep);
+  currentStep++;
+  updateStepLabel();
+}
+
+function togglePlay() {
+  if (playing) {
+    stopPlay();
+  } else {
+    startPlay();
+  }
+}
+
+function startPlay() {
+  playing = true;
+  document.getElementById('btnPlay').textContent = '⏸ Pause';
+
+  function tick() {
+    if (currentStep >= steps.length) {
+      stopPlay();
+      return;
+    }
+    stepForward();
+    playTimer = setTimeout(tick, 2200);
+  }
+  tick();
+}
+
+function stopPlay() {
+  playing = false;
+  document.getElementById('btnPlay').textContent = '▶ Play All';
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+}
+
+function reset() {
+  stopPlay();
+  currentStep = 0;
+  clearHighlights();
+  hideAnnotation();
+  steps.forEach(s => {
+    const branchEl = document.getElementById('branch-' + s.branchKey);
+    if (branchEl) {
+      branchEl.innerHTML = `<span class="

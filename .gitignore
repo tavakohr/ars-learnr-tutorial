@@ -3,6 +3,8 @@ materials/BUILD_INSTRUCTIONS_learnr_tutorial.md
 
 # Rendered tutorial outputs
 *.html
+!ars_reportingevent_structure_animation.html
+!demog_to_ard_animation.html
 *_files/
 *_cache/
 
